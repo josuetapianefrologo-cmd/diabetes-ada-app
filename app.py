@@ -591,46 +591,64 @@ with c3:
         key=f"pp_max:{unidad_gluc}"
     )
 
-# ================== Motor de recomendaciones ==================
-def recomendacion_farmacos(tipo_dm, a1c, gl_ay, gl_pp, egfr, ckd, ascvd, ic, imc):
+# ===== Motor de recomendaciones =====
+def recomendacion_farmacos(
+    tipo_dm, a1c, gl_ay, gl_pp, egfr, ckd, ascvd, ic, imc, a1c_target=7.0
+):
     lines, just = [], []
+
     if tipo_dm == "DM1":
-        lines.append("DM1 → necesario esquema con **insulina basal-bolo** o sistema AID; educación y conteo de carbohidratos.")
+        lines.append("DM1 → necesario esquema con *insulina basal-bolo* o sistema AID; educación y conteo de carbohidratos.")
         if docente:
             just.append("DM1 depende de insulina exógena – los orales no cubren el déficit absoluto.")
         return lines, just
 
+    # umbrales “clásicos” en mg/dL (ya convertiste glucosas a mg/dL antes)
+    umbral_ay = 130
+    umbral_pp = 180
+
     if (a1c is not None and a1c > 10) or (gl_ay is not None and gl_ay >= 300):
-        lines.append("**Iniciar/optimizar insulina** (basal ± prandial) desde el inicio.")
-        if docente: just.append("A1c >10% o glucosa ≥300 mg/dL o síntomas catabólicos.")
+        lines.append("*Iniciar/optimizar insulina* (basal ± prandial) desde el inicio.")
+        if docente:
+            just.append("A1c >10% o glucosa ≥300 mg/dL o síntomas catabólicos.")
+
     if ic:
-        lines.append("**IC** → priorizar **SGLT2i** (beneficio en IC).")
+        lines.append("*IC* → priorizar *SGLT2i* (beneficio en IC).")
         if docente: just.append("SGLT2i reduce hospitalización por IC.")
+
     if ascvd:
-        lines.append("**ASCVD** → **GLP-1 RA** con beneficio CV o **SGLT2i**.")
+        lines.append("*ASCVD* → *GLP-1 RA* con beneficio CV o *SGLT2i*.")
+
     if imc and imc >= 30:
-        lines.append("**Obesidad** → preferir **GLP-1 RA** por efecto en peso.")
+        lines.append("*Obesidad* → preferir *GLP-1 RA* por efecto en peso.")
+
     if (ckd or egfr < 60):
         if egfr >= 20:
-            lines.append("**CKD** → agregar **SGLT2i** para protección renal/CV (eGFR ≥20).")
+            lines.append("*CKD* → agregar *SGLT2i* para protección renal/CV (eGFR ≥20).")
             if docente: just.append("Eficacia hipoglucemiante menor si eGFR <45, pero beneficio renal/CV persiste.")
         else:
-            lines.append("**CKD avanzada** (eGFR <20) → preferir **GLP-1 RA** para control glucémico.")
+            lines.append("*CKD avanzada* (eGFR <20) → preferir *GLP-1 RA* para control glucémico.")
         if "A2" in uacr_cat or "A3" in uacr_cat:
-            lines.append("**Albuminuria A2/A3** → IECA/ARA2 si procede.")
+            lines.append("*Albuminuria A2/A3* → IECA/ARA2 si procede.")
+
+    # Metformina según eGFR
     if egfr >= 45:
-        lines.append("**Metformina** útil y segura (eGFR ≥45).")
+        lines.append("*Metformina* útil y segura (eGFR ≥45).")
     elif 30 <= egfr < 45:
-        lines.append("Metformina si ya la usaba → **máx 1000 mg/d**; **evitar iniciar** en 30–44.")
+        lines.append("Metformina si ya la usaba → *máx 1000 mg/d; **evitar iniciar* en 30–44.")
     else:
-        lines.append("**Metformina contraindicada** eGFR <30.")
-    # Posprandial
-    umbral_pp = pp_max if unidad_gluc == "mg/dL" else mmoll_to_mgdl(pp_max)
-    if gl_pp and gl_pp > umbral_pp:
-        lines.append("**Posprandial alta** → GLP-1 RA o añadir **bolo prandial**; revisar raciones/tiempos.")
-    # Si bajo riesgo global
-    if not (ic or ascvd or ckd or egfr < 60) and not ((a1c and a1c > a1c_meta) and (gl_ay and gl_ay > 130)):
-        lines.append("**Metformina** + estilo de vida; valorar **GLP-1 RA** o **SGLT2i** si no se alcanza meta.")
+        lines.append("*Metformina contraindicada* eGFR <30.")
+
+    # Posprandial elevada
+    if gl_pp is not None and gl_pp > umbral_pp:
+        lines.append("*Posprandial alta* → GLP-1 RA o añadir *bolo prandial*; revisar raciones/tiempos.")
+
+    # Riesgo global bajo → enfoque metformina/estilo de vida
+    if not (ic or ascvd or ckd or egfr < 60) and not (
+        (a1c is not None and a1c > a1c_target) and (gl_ay is not None and gl_ay > umbral_ay)
+    ):
+        lines.append("*Metformina* + estilo de vida; valorar *GLP-1 RA* o *SGLT2i* si no se alcanza meta.")
+
     return lines, just
 
 def basal_init_titration(dx, peso_kg, a1c, alto_riesgo_hipo=False):
@@ -747,7 +765,7 @@ with tab_res:
         """, unsafe_allow_html=True
     )
 
-    recs, just = recomendacion_farmacos(dx, a1c, gluc_ayunas, gluc_pp, egfr, ckd_conocida, ascvd, ic, imc_val)
+    recs, just = recomendacion_farmacos(dx, a1c, gluc_ayunas, gluc_pp, egfr, ckd_conocida, ascvd, ic, imc_val, a1c_target=a1c_meta)
     st.markdown("#### Recomendación terapéutica (ADA – priorización por riesgo)")
     for r in recs:
         st.markdown(f"- {r}")
@@ -835,7 +853,7 @@ with tab_res:
 with tab_plan:
     st.markdown("#### Plan terapéutico imprimible")
     # Construcción de plan y listas
-    recs, just = recomendacion_farmacos(dx, a1c, gluc_ayunas, gluc_pp, egfr, ckd_conocida, ascvd, ic, imc_val)
+    recs, just = recomendacion_farmacos(dx, a1c, gluc_ayunas, gluc_pp, egfr, ckd_conocida, ascvd, ic, imc_val, a1c_target=a1c_meta)
     texto_basal, reglas = basal_init_titration(dx, peso, a1c)
     plan = recs + [f"Inicio de insulina: {texto_basal}"] + reglas
     if dx == "DM2":
