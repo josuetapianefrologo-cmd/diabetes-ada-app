@@ -332,24 +332,32 @@ def ui_perfiles_pacientes():
 
 with bcols[1]:
     if st.button("➕", use_container_width=True, help="Iniciar un nuevo formulario", key="btn_new_profile"):
-        # Setea sólo keys que SÍ existen (por si cambiaste nombres)
-        def _set_if_present(k, v):
-            if k in st.session_state:
-                st.session_state[k] = v
+        # Restaura a defaults SOLO keys de widgets conocidas:
+        DEFAULTS = {
+            "unidad_gluc": "mg/dL",
+            "nombre": "",
+            "edad": 55,
+            "sexo": "Femenino",
+            "dx": "DM2",
+            "peso": 80.0,
+            "talla": 170,
+            "a1c": 8.2,
+            "scr": 1.0,
+            "uacr": 20.0,
+            # glucosas por unidad:
+            "ay_mgdL": 150.0,
+            "pp_mgdL": 190.0,
+            "ay_mmolL": 8.3,
+            "pp_mmolL": 10.5,
+        }
 
-        _set_if_present("nombre", "")
-        _set_if_present("edad", 55)
-        _set_if_present("sexo", "Femenino")
-        _set_if_present("dx", "DM2")
-        _set_if_present("peso", 80.0)
-        _set_if_present("talla", 170)
-        # glucosas y lab
-        set_if_present("ay_mg/dL", 150.0)      # si tu input usa key=f"ay{unidad_gluc}", también setea esa
-        _set_if_present("pp_mg/dL", 190.0)
-        _set_if_present("scr", 1.0)
-        _set_if_present("uacr", 20.0)
+        # Aplica defaults de forma segura
+        for k, v in DEFAULTS.items():
+            st.session_state[k] = v
 
+        # Limpia notas si la usas
         st.session_state["notas_paciente"] = ""
+
         st.success("Formulario en blanco.")
         st.rerun()
 
@@ -465,9 +473,28 @@ def sugerencia_para(farmaco):
     c, n, inicio, maxd, nota = rows[0]
     return f"Inicio sugerido: **{inicio}** · **Máxima:** {maxd}. {nota}"
 
-# ================== Sidebar (datos del paciente) ==================
+# ===== Sidebar: Datos del paciente (keys estables) =====
 with st.sidebar:
     st.header("Paciente")
+
+    # Defaults centralizados (puedes ajustar)
+    DEFAULTS = {
+        "unidad_gluc": "mg/dL",
+        "nombre": "",
+        "edad": 55,
+        "sexo": "Femenino",
+        "dx": "DM2",
+        "peso": 80.0,
+        "talla": 170,
+        "a1c": 8.2,
+        "scr": 1.0,
+        "uacr": 20.0,
+    }
+    # Inicializa si no existe
+    for k, v in DEFAULTS.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
+
     unidad_gluc = st.selectbox("Unidades de glucosa", ["mg/dL", "mmol/L"], key="unidad_gluc")
     nombre = st.text_input("Nombre", value=st.session_state.get("nombre",""), key="nombre")
     edad = st.number_input("Edad (años)", 18, 100, st.session_state.get("edad",55), key="edad")
@@ -475,36 +502,46 @@ with st.sidebar:
     dx = st.selectbox("Diagnóstico", ["DM2", "DM1"], key="dx")
     peso = st.number_input("Peso (kg)", 25.0, 300.0, st.session_state.get("peso",80.0), step=0.5, key="peso")
     talla = st.number_input("Talla (cm)", 120, 230, st.session_state.get("talla",170), key="talla")
-    imc_val = bmi(st.session_state.get("peso",peso), st.session_state.get("talla",talla))
+
+    imc_val = bmi(st.session_state["peso"], st.session_state["talla"])
     st.caption(f"IMC: *{imc_val if imc_val else 'ND'} kg/m²*")
 
     st.divider()
-    ui_perfiles_pacientes()
 
-    a1c = st.number_input("A1c (%)", 4.0, 15.0, 8.2, step=0.1, key="a1c")
-
-    # Rango seguro por unidad (y keys por unidad para evitar crash)
+    # Glucosas con keys seguras por unidad (sin '/')
     ay_min = 2.0 if unidad_gluc == "mmol/L" else 50.0
     ay_max = 33.3 if unidad_gluc == "mmol/L" else 600.0
     pp_min = 2.0 if unidad_gluc == "mmol/L" else 50.0
     pp_maxx = 33.3 if unidad_gluc == "mmol/L" else 600.0
 
+    # keys de glucosas por unidad (sin '/')
+    ay_key = f"ay_{'mmolL' if unidad_gluc=='mmol/L' else 'mgdL'}"
+    pp_key = f"pp_{'mmolL' if unidad_gluc=='mmol/L' else 'mgdL'}"
+    if ay_key not in st.session_state:
+        st.session_state[ay_key] = 8.3 if unidad_gluc == "mmol/L" else 150.0
+    if pp_key not in st.session_state:
+        st.session_state[pp_key] = 10.5 if unidad_gluc == "mmol/L" else 190.0
+
     gluc_ayunos = st.number_input(
-        f"Glucosa en ayunas ({unidad_gluc})", min_value=ay_min, max_value=ay_max,
-        value=8.3 if unidad_gluc == "mmol/L" else 150.0,
-        key=f"ay_{unidad_gluc}"
+        f"Glucosa en ayunas ({unidad_gluc})",
+        min_value=ay_min, max_value=ay_max,
+        value=st.session_state[ay_key],
+        key=ay_key
     )
     gluc_pp_in = st.number_input(
-        f"Glucosa 120 min ({unidad_gluc})", min_value=pp_min, max_value=pp_maxx,
-        value=10.5 if unidad_gluc == "mmol/L" else 190.0,
-        key=f"pp_{unidad_gluc}"
+        f"Glucosa 120 min ({unidad_gluc})",
+        min_value=pp_min, max_value=pp_maxx,
+        value=st.session_state[pp_key],
+        key=pp_key
     )
+
     gluc_ayunas = to_mgdl_val(gluc_ayunos, unidad_gluc)
     gluc_pp = to_mgdl_val(gluc_pp_in, unidad_gluc)
 
-    scr = st.number_input("Creatinina sérica (mg/dL)", 0.2, 12.0, 1.0, step=0.1, key="scr")
-    uacr = st.number_input("UACR (mg/g)", 0.0, 10000.0, 20.0, step=1.0, key="uacr")
-    uacr_cat = uacr_categoria(uacr)
+    st.number_input("A1c (%)", 4.0, 15.0, st.session_state.get("a1c", 8.2), step=0.1, key="a1c")
+    st.number_input("Creatinina sérica (mg/dL)", 0.2, 12.0, st.session_state.get("scr",1.0), step=0.1, key="scr")
+    st.number_input("UACR (mg/g)", 0.0, 10000.0, st.session_state.get("uacr",20.0), step=1.0, key="uacr")
+    uacr_cat = uacr_categoria(st.session_state["uacr"])
     ascvd = st.checkbox("ASCVD (IAM/angina/ictus/PAD)", key="ascvd")
     ic = st.checkbox("Insuficiencia cardiaca", key="ic")
     ckd_conocida = st.checkbox("CKD conocida", key="ckd_conocida")
