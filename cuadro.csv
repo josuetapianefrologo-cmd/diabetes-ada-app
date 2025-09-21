@@ -1,0 +1,9 @@
+clase,nombre,costo,disp,renal,notas,institucion
+Metformina,Metformina,$,alta,ajuste,"Plena >=45; 30-44 máx 1000 mg/d; <30 contraindicada.",TODAS
+SU,Glipizida,$,alta,ok,"Preferible en CKD; riesgo de hipo.",TODAS
+SGLT2i,Empagliflozina,$$$,media,umbral20,"Beneficio renal/CV; menor potencia <45.",IMSS
+GLP-1 RA,Semaglutida,$$$,baja,ok,"Pérdida de peso; CV+.",ISSSTE
+Insulina basal,NPH,$,alta,ok,"1-2 dosis; bajo costo.",TODAS
+Insulina prandial,Regular,$,alta,ok,"Comer 30 min tras aplicación.",TODAS
+DPP-4,Linagliptina,$$,media,ok,"Sin ajuste renal.",TODAS
+TZD,Pioglitazona,$,media,ok,"Vigilar edema/IC.",TODAS
