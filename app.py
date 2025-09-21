@@ -1,7 +1,7 @@
-# app.py — Diabetes ADA MX (PLUS / PRO) Premium con PDFs, Glosario y Advertencias
+# app.py — Diabetes ADA MX (PLUS / PRO) Premium con PDFs, Perfiles Locales y Modo Docente
 # © 2025. Herramienta de apoyo clínico (no sustituye juicio profesional).
 
-import os, json
+import os, json, platform
 import streamlit as st
 import numpy as np
 import pandas as pd
@@ -33,7 +33,7 @@ st.markdown(
         --warn:#f59e0b;
         --bad:#dc2626;
       }
-      .block-container{padding-top:2.8rem;}
+      .block-container{padding-top:2.4rem;}
       .badge{display:inline-block;padding:.20rem .55rem;border-radius:999px;font-size:.75rem;
              background:rgba(37,99,235,.10);color:#1d4ed8;border:1px solid rgba(37,99,235,.20);margin-right:.35rem}
       .muted{color:var(--muted);font-size:.9rem}
@@ -49,7 +49,7 @@ st.markdown(
 left, mid, right = st.columns([1.4, 0.9, 1.0])
 with left:
     st.markdown("### 🩺 **Diabetes ADA MX**")
-    st.caption("eGFR CKD-EPI 2021 · Motor de decisiones ADA · PDFs · Modo PLUS/PRO · Modo Docente")
+    st.caption("eGFR CKD-EPI 2021 · Motor de decisiones ADA · PDFs · PLUS/PRO · Docente · Perfiles locales")
 
 with mid:
     modo = st.radio(
@@ -57,7 +57,7 @@ with mid:
         options=["PLUS", "PRO"],
         index=0,
         horizontal=True,
-        help="PRO incluye calculadora 500/1800 y exporta sus parámetros al PDF."
+        help="PRO incluye calculadora 500/1800 y exporta parámetros al PDF."
     )
 
 with right:
@@ -107,8 +107,92 @@ def uacr_categoria(uacr_mgg):
     if v < 300: return "A2 (30-299 mg/g)"
     return "A3 (≥300 mg/g)"
 
-# ====================== Perfiles de Pacientes (CSV local) ======================
-PACIENTES_CSV = "data/pacientes.csv"
+def metas_glicemicas_default(edad):
+    if edad >= 65:
+        return {"A1c_max": 7.5, "pre_min": 80, "pre_max": 130, "pp_max": 180}
+    return {"A1c_max": 7.0, "pre_min": 80, "pre_max": 130, "pp_max": 180}
+
+# ================== Blindaje de privacidad y almacenamiento local ==================
+def _sugerir_carpeta_por_defecto():
+    home = os.path.expanduser("~")
+    if platform.system().lower().startswith("win"):
+        base = os.path.join(home, "Documents", "DiabetesADA")
+    elif platform.system().lower().startswith("darwin"):
+        base = os.path.join(home, "Documents", "DiabetesADA")  # macOS
+    else:
+        base = os.path.join(home, "DiabetesADA")               # Linux
+    return base
+
+if "local_guardado_aceptado" not in st.session_state:
+    st.session_state["local_guardado_aceptado"] = False
+if "local_medico_firma" not in st.session_state:
+    st.session_state["local_medico_firma"] = ""
+if "local_carpeta" not in st.session_state:
+    st.session_state["local_carpeta"] = _sugerir_carpeta_por_defecto()
+
+st.divider()
+st.subheader("🔒 Privacidad y guardado local")
+
+with st.container():
+    st.markdown(
+        """
+        **Aviso de privacidad (guardado local):**  
+        Los datos ingresados se guardarán **únicamente en la carpeta local** que elijas en esta computadora.
+        No se enviarán a servidores externos por esta función.  
+        Asegúrate de **proteger el equipo** (contraseña/sistema operativo) y, si exportas a USB, resguardar ese medio.
+
+        Para habilitar el guardado local, escribe tu **firma (nombre del médico)** y marca **Acepto**.
+        """
+    )
+    colp1, colp2 = st.columns([2,1])
+    with colp1:
+        st.session_state["local_medico_firma"] = st.text_input(
+            "Firma (nombre del médico responsable)", 
+            st.session_state["local_medico_firma"],
+            placeholder="Dr. Nombre Apellido"
+        )
+    with colp2:
+        aceptar = st.checkbox("Acepto", value=st.session_state["local_guardado_aceptado"])
+        if st.button("Confirmar", use_container_width=True):
+            st.session_state["local_guardado_aceptado"] = bool(aceptar and st.session_state["local_medico_firma"].strip())
+
+    st.caption("Estado: " + ("✅ ACEPTADO (guardado habilitado)" if st.session_state["local_guardado_aceptado"] else "⛔ No aceptado (guardado deshabilitado)"))
+
+    st.markdown("**Carpeta local donde se guardarán los datos:**")
+    st.session_state["local_carpeta"] = st.text_input(
+        "Ruta completa de la carpeta local",
+        st.session_state["local_carpeta"],
+        help="Ej., C:\\Usuarios\\TuNombre\\Documentos\\DiabetesADA (Windows) o /Users/TuNombre/Documents/DiabetesADA (macOS)"
+    )
+
+def _carpeta_valida(path: str) -> bool:
+    try:
+        if not path: 
+            return False
+        os.makedirs(path, exist_ok=True)
+        # prueba de escritura mínima
+        test_file = os.path.join(path, ".probe_write.tmp")
+        with open(test_file, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(test_file)
+        return True
+    except Exception:
+        return False
+
+def _ruta_pacientes_csv_local():
+    base = st.session_state.get("local_carpeta", "").strip()
+    if not base:
+        return None
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, "pacientes.csv")
+
+def _ruta_metadata_local():
+    base = st.session_state.get("local_carpeta", "").strip()
+    if not base:
+        return None
+    return os.path.join(base, "metadata.json")
+
+# ====================== Perfiles de Pacientes (CSV local repo o local PC) ======================
 PACIENTES_COLUMNS = [
     "id","nombre","edad","sexo","dx","peso_kg","talla_cm","a1c_pct",
     "unidad_gluc","gluc_ayunas","gluc_pp",
@@ -116,83 +200,108 @@ PACIENTES_COLUMNS = [
     "meds_json","notas","fecha_ultima_actualizacion"
 ]
 
-def _ensure_pacientes_csv():
-    os.makedirs(os.path.dirname(PACIENTES_CSV), exist_ok=True)
-    if not os.path.exists(PACIENTES_CSV):
-        pd.DataFrame(columns=PACIENTES_COLUMNS).to_csv(PACIENTES_CSV, index=False)
+def _storage_mode_and_path():
+    """
+    Devuelve ('local', ruta) si aceptado + carpeta válida.
+    Si no, ('repo', 'data/pacientes.csv').
+    """
+    if st.session_state.get("local_guardado_aceptado") and st.session_state.get("local_medico_firma","").strip():
+        target = _ruta_pacientes_csv_local()
+        if target and _carpeta_valida(os.path.dirname(target)):
+            return "local", target
+    return "repo", os.path.join("data", "pacientes.csv")
+
+def _ensure_path_for(path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if not os.path.exists(path):
+        pd.DataFrame(columns=PACIENTES_COLUMNS).to_csv(path, index=False)
 
 def cargar_pacientes() -> pd.DataFrame:
-    _ensure_pacientes_csv()
+    modo, path = _storage_mode_and_path()
+    _ensure_path_for(path)
     try:
-        df = pd.read_csv(PACIENTES_CSV, dtype=str).fillna("")
+        df = pd.read_csv(path, dtype=str).fillna("")
     except Exception:
         df = pd.DataFrame(columns=PACIENTES_COLUMNS)
-    # normaliza tipos útiles en memoria
-    if "id" in df.columns:
-        # si no hay id, crea
-        if df["id"].eq("").any():
-            df.loc[df["id"].eq(""), "id"] = df.index.astype(str)
+    if "id" in df.columns and df["id"].eq("").any():
+        df.loc[df["id"].eq(""), "id"] = df.index.astype(str)
     return df
 
 def guardar_pacientes(df: pd.DataFrame):
-    _ensure_pacientes_csv()
-    # Ordena columnas y castea todo a string para evitar problemas
+    modo, path = _storage_mode_and_path()
+    _ensure_path_for(path)
     for col in PACIENTES_COLUMNS:
         if col not in df.columns:
             df[col] = ""
     df = df[PACIENTES_COLUMNS].fillna("")
-    df.to_csv(PACIENTES_CSV, index=False)
-
-def _nuevo_id(df: pd.DataFrame) -> str:
-    if df.empty: 
-        return "1"
+    df.to_csv(path, index=False)
+    # metadata con firma
+    meta_path = _ruta_metadata_local() if modo == "local" else os.path.join("data", "metadata.json")
     try:
-        mx = max(int(x) for x in df["id"] if str(x).isdigit())
-    except ValueError:
-        mx = 0
-    return str(mx + 1)
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "modo": modo,
+                    "ruta": path,
+                    "medico_firma": st.session_state.get("local_medico_firma", ""),
+                    "fecha": datetime.utcnow().isoformat() + "Z",
+                    "equipo": platform.node(),
+                    "so": platform.platform()
+                },
+                f,
+                ensure_ascii=False,
+                indent=2
+            )
+    except Exception:
+        pass
 
 def recolectar_datos_actuales() -> dict:
-    """
-    Toma los valores de tus widgets actuales. 
-    Si tus variables tienen otros nombres, ajusta aquí.
-    """
+    # Lectura usando keys dinámicas por unidad
+    u = st.session_state.get("unidad_gluc", "mg/dL")
+    ay_key = f"ay_{u}"
+    pp_key = f"pp_{u}"
     return {
         "nombre": st.session_state.get("nombre", ""),
-        "edad":   st.session_state.get("Edad (años)", st.session_state.get("edad", "")),
-        "sexo":   st.session_state.get("sexo", st.session_state.get("Sexo biológico", "")),
-        "dx":     st.session_state.get("dx", st.session_state.get("Diagnóstico", "")),
+        "edad":   st.session_state.get("edad", ""),
+        "sexo":   st.session_state.get("sexo", ""),
+        "dx":     st.session_state.get("dx", ""),
         "peso_kg": st.session_state.get("peso", ""),
         "talla_cm": st.session_state.get("talla", ""),
         "a1c_pct": st.session_state.get("a1c", ""),
-        "unidad_gluc": st.session_state.get("unidad_gluc", "mg/dL"),
-        "gluc_ayunas": st.session_state.get("gluc_ayunas_in", st.session_state.get("gluc_ayunas", "")),
-        "gluc_pp": st.session_state.get("gluc_pp_in", st.session_state.get("gluc_pp", "")),
+        "unidad_gluc": u,
+        "gluc_ayunas": st.session_state.get(ay_key, ""),
+        "gluc_pp":     st.session_state.get(pp_key, ""),
         "creatinina_mgdl": st.session_state.get("scr", ""),
         "uacr_mgg": st.session_state.get("uacr", ""),
         "ascvd": "Sí" if st.session_state.get("ascvd", False) else "No",
         "ic":    "Sí" if st.session_state.get("ic", False) else "No",
-        # puedes guardar el plan farmacológico como JSON (si lo tienes armado)
         "meds_json": json.dumps(st.session_state.get("plan_meds", {}), ensure_ascii=False),
         "notas": st.session_state.get("notas_paciente", "")
     }
 
 def aplicar_a_widgets(p: dict):
-    """
-    Intenta volcar el perfil a los widgets (por clave en session_state).
-    Ajusta las llaves si usas nombres distintos.
-    """
     st.session_state["nombre"] = p.get("nombre","")
     st.session_state["edad"] = int(float(p["edad"])) if str(p.get("edad","")).strip() else 0
-    st.session_state["Sexo biológico"] = p.get("sexo","")
+    st.session_state["sexo"] = p.get("sexo","")
     st.session_state["dx"] = p.get("dx","")
     st.session_state["peso"] = float(p["peso_kg"]) if str(p.get("peso_kg","")).strip() else 0.0
     st.session_state["talla"] = int(float(p["talla_cm"])) if str(p.get("talla_cm","")).strip() else 0
     st.session_state["a1c"] = float(p["a1c_pct"]) if str(p.get("a1c_pct","")).strip() else 0.0
-    st.session_state["unidad_gluc"] = p.get("unidad_gluc","mg/dL")
-    # Estos dos son los inputs visibles; si usas otros, cambia las llaves
-    st.session_state["gluc_ayunas_in"] = float(p["gluc_ayunas"]) if str(p.get("gluc_ayunas","")).strip() else 0.0
-    st.session_state["gluc_pp_in"]     = float(p["gluc_pp"]) if str(p.get("gluc_pp","")).strip() else 0.0
+
+    # Fija unidad y vuelve a escribir glucosas en las keys dinámicas actuales
+    u = p.get("unidad_gluc","mg/dL") or "mg/dL"
+    st.session_state["unidad_gluc"] = u
+    ay_key = f"ay_{u}"
+    pp_key = f"pp_{u}"
+    try:
+        st.session_state[ay_key] = float(p["gluc_ayunas"]) if str(p.get("gluc_ayunas","")).strip() else 0.0
+    except Exception:
+        st.session_state[ay_key] = 0.0
+    try:
+        st.session_state[pp_key] = float(p["gluc_pp"]) if str(p.get("gluc_pp","")).strip() else 0.0
+    except Exception:
+        st.session_state[pp_key] = 0.0
+
     st.session_state["scr"]  = float(p["creatinina_mgdl"]) if str(p.get("creatinina_mgdl","")).strip() else 0.0
     st.session_state["uacr"] = float(p["uacr_mgg"]) if str(p.get("uacr_mgg","")).strip() else 0.0
     st.session_state["ascvd"] = True if p.get("ascvd","No") == "Sí" else False
@@ -221,33 +330,33 @@ def ui_perfiles_pacientes():
 
     with cols[2]:
         if st.button("➕ Nuevo", use_container_width=True):
-            st.session_state["nombre"] = ""
-            st.session_state["notas_paciente"] = ""
+            for k in ["nombre","notas_paciente"]:
+                st.session_state[k] = ""
             st.info("Formulario limpiado. Ingresa datos y guarda como nuevo.")
 
     with cols[3]:
         if st.button("💾 Guardar/Actualizar", use_container_width=True):
-            datos = recolectar_datos_actuales()
-            ahora = datetime.utcnow().strftime("%Y-%m-%d %H:%MZ")
-            datos["fecha_ultima_actualizacion"] = ahora
-
-            # ¿actualizo el seleccionado o creo uno nuevo?
-            if id_sel:
-                idx = df.index[df["id"]==id_sel]
-                if len(idx):
-                    datos["id"] = id_sel
-                    for k,v in datos.items():
-                        df.loc[idx, k] = str(v)
-                    guardar_pacientes(df)
-                    st.success(f"Perfil actualizado: {datos['nombre']}")
+            if not st.session_state.get("local_guardado_aceptado"):
+                st.error("Debes aceptar el aviso y firmar para habilitar guardado local.")
+            else:
+                datos = recolectar_datos_actuales()
+                datos["fecha_ultima_actualizacion"] = datetime.utcnow().strftime("%Y-%m-%d %H:%MZ")
+                if id_sel:
+                    idx = df.index[df["id"]==id_sel]
+                    if len(idx):
+                        datos["id"] = id_sel
+                        for k,v in datos.items():
+                            df.loc[idx, k] = str(v)
+                        guardar_pacientes(df)
+                        st.success(f"Perfil actualizado: {datos['nombre']}")
+                    else:
+                        nuevo = pd.DataFrame([{**datos, "id": _nuevo_id(df)}])
+                        guardar_pacientes(pd.concat([df, nuevo], ignore_index=True))
+                        st.success(f"Perfil creado: {datos['nombre']}")
                 else:
                     nuevo = pd.DataFrame([{**datos, "id": _nuevo_id(df)}])
                     guardar_pacientes(pd.concat([df, nuevo], ignore_index=True))
                     st.success(f"Perfil creado: {datos['nombre']}")
-            else:
-                nuevo = pd.DataFrame([{**datos, "id": _nuevo_id(df)}])
-                guardar_pacientes(pd.concat([df, nuevo], ignore_index=True))
-                st.success(f"Perfil creado: {datos['nombre']}")
 
     with cols[4]:
         if st.button("🗑️ Eliminar", use_container_width=True, type="secondary", disabled=not id_sel):
@@ -255,43 +364,51 @@ def ui_perfiles_pacientes():
             guardar_pacientes(df)
             st.warning("Perfil eliminado.")
 
+    # Exportar / Importar
     st.divider()
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("**Descargar CSV de perfiles**")
-        _ensure_pacientes_csv()
-        buf = BytesIO()
-        cargar_pacientes().to_csv(buf, index=False).encode()
-        buf.seek(0)
+    st.markdown("### 💾 Exportar/Importar (USB)")
+    cexp, cimp = st.columns(2)
+    with cexp:
+        st.markdown("**Exportar a archivo (descarga)**")
+        csv_bytes = cargar_pacientes().to_csv(index=False).encode("utf-8")
         st.download_button(
             "⬇️ Descargar `pacientes.csv`",
-            data=buf,
+            data=csv_bytes,
             file_name="pacientes.csv",
             mime="text/csv",
             use_container_width=True
         )
-    with c2:
-        st.markdown("**Subir/Unir CSV**")
-        f = st.file_uploader("Carga un `pacientes.csv` para unir o reemplazar", type=["csv"], label_visibility="collapsed")
-        modo = st.radio("Modo de carga", ["Unir (merge)", "Reemplazar"], horizontal=True)
-        if f and st.button("Procesar CSV", use_container_width=True):
+        st.caption("Guárdalo en tu **USB** o en **Mis documentos**. En otra PC podrás importarlo.")
+    with cimp:
+        st.markdown("**Importar desde archivo**")
+        f = st.file_uploader("Selecciona un `pacientes.csv` desde USB o carpeta", type=["csv"], label_visibility="collapsed")
+        modo_imp = st.radio("Modo de importación", ["Unir (merge)", "Reemplazar"], horizontal=True)
+        if f and st.button("Importar CSV", use_container_width=True):
             try:
                 up = pd.read_csv(f, dtype=str).fillna("")
-                if modo.startswith("Reemplazar"):
-                    guardar_pacientes(up)
-                    st.success("Archivo reemplazado.")
+                if "id" not in up.columns:
+                    st.error("El CSV no tiene columna 'id'. No se puede importar.")
                 else:
                     base = cargar_pacientes()
-                    # unir por id evitando duplicados (se queda el de 'up')
-                    if "id" not in up.columns:
-                        st.error("El CSV subido no tiene columna 'id'.")
+                    if modo_imp.startswith("Reemplazar"):
+                        guardar_pacientes(up)
+                        st.success("Archivo **reemplazado** correctamente.")
                     else:
                         mezcla = pd.concat([base[~base["id"].isin(up["id"])], up], ignore_index=True)
                         guardar_pacientes(mezcla)
-                        st.success("Perfiles unidos correctamente.")
+                        st.success("Datos **unidos** correctamente.")
             except Exception as e:
-                st.error(f"Error al procesar CSV: {e}")
-                
+                st.error(f"Error al importar: {e}")
+
+def _nuevo_id(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "1"
+    try:
+        mx = max(int(x) for x in df["id"] if str(x).isdigit())
+    except ValueError:
+        mx = 0
+    return str(mx + 1)
+
 # ================== Catálogo de fármacos (sin instituciones) ==================
 CATALOGO = [
     # clase, nombre, inicio_sugerido, max_dosis, nota_titulacion
@@ -320,23 +437,29 @@ def alternativas_de_clase(clase, excluir=None):
         out = [d for d in out if d[1] != excluir]
     return out
 
+def sugerencia_para(farmaco):
+    rows = [d for d in CATALOGO if d[1] == farmaco]
+    if not rows:
+        return None
+    c, n, inicio, maxd, nota = rows[0]
+    return f"Inicio sugerido: **{inicio}** · **Máxima:** {maxd}. {nota}"
+
 # ================== Sidebar (datos del paciente) ==================
 with st.sidebar:
     st.header("Paciente")
-    unidad_gluc = st.selectbox("Unidades de glucosa", ["mg/dL", "mmol/L"])
-    nombre = st.text_input("Nombre", "")
+    unidad_gluc = st.selectbox("Unidades de glucosa", ["mg/dL", "mmol/L"], key="unidad_gluc")
+    nombre = st.text_input("Nombre", "", key="nombre")
     edad = st.number_input("Edad (años)", 18, 100, 55, key="edad")
-    sexo = st.selectbox("Sexo biológico", ["Femenino", "Masculino"])
-    dx = st.selectbox("Diagnóstico", ["DM2", "DM1"])
+    sexo = st.selectbox("Sexo biológico", ["Femenino", "Masculino"], key="sexo")
+    dx = st.selectbox("Diagnóstico", ["DM2", "DM1"], key="dx")
     peso = st.number_input("Peso (kg)", 25.0, 300.0, 80.0, step=0.5, key="peso")
     talla = st.number_input("Talla (cm)", 120, 230, 170, key="talla")
     imc_val = bmi(peso, talla)
     st.caption(f"IMC: **{imc_val if imc_val else 'ND'} kg/m²**")
-with st.sidebar:
-    st.header("Paciente")
-    # … (tus inputs: nombre, edad, sexo, dx, etc.)
+
     st.divider()
-    ui_perfiles_pacientes()  # <-- aquí aparece el gestor de perfiles
+    ui_perfiles_pacientes()
+
     a1c = st.number_input("A1c (%)", 4.0, 15.0, 8.2, step=0.1, key="a1c")
 
     # Rango seguro por unidad (y keys por unidad para evitar crash)
@@ -361,21 +484,19 @@ with st.sidebar:
     scr = st.number_input("Creatinina sérica (mg/dL)", 0.2, 12.0, 1.0, step=0.1, key="scr")
     uacr = st.number_input("UACR (mg/g)", 0.0, 10000.0, 20.0, step=1.0, key="uacr")
     uacr_cat = uacr_categoria(uacr)
-    ascvd = st.checkbox("ASCVD (IAM/angina/ictus/PAD)")
-    ic = st.checkbox("Insuficiencia cardiaca")
-    ckd_conocida = st.checkbox("CKD conocida")
+    ascvd = st.checkbox("ASCVD (IAM/angina/ictus/PAD)", key="ascvd")
+    ic = st.checkbox("Insuficiencia cardiaca", key="ic")
+    ckd_conocida = st.checkbox("CKD conocida", key="ckd_conocida")
 
 # ================== Cálculos básicos ==================
 egfr = egfr_ckdepi_2021(scr, int(edad), sexo)
+modo_store, ruta_store = _storage_mode_and_path()
+st.caption(f"🗂️ Almacenamiento: **{ 'LOCAL' if modo_store=='local' else 'REPO' }** → {ruta_store}")
+if modo_store == "local":
+    st.caption(f"👤 Firma: **{st.session_state.get('local_medico_firma','—')}**  ·  Equipo: {platform.node()}")
 
-def metas_glicemicas_default(edad):
-    if edad >= 65:
-        return {"A1c_max": 7.5, "pre_min": 80, "pre_max": 130, "pp_max": 180}
-    return {"A1c_max": 7.0, "pre_min": 80, "pre_max": 130, "pp_max": 180}
-
+# ================== Metas ==================
 metas = metas_glicemicas_default(edad)
-
-# ================== Metas con protección de keys ==================
 st.subheader("Metas activas")
 a1c_meta = st.number_input("A1c meta (%)", 5.5, 9.0, metas["A1c_max"], 0.1, key="a1c_meta")
 
@@ -526,13 +647,6 @@ edit_df = st.data_editor(
 )
 st.session_state[key_data] = edit_df
 
-def sugerencia_para(farmaco):
-    rows = [d for d in CATALOGO if d[1] == farmaco]
-    if not rows:
-        return None
-    c, n, inicio, maxd, nota = rows[0]
-    return f"Inicio sugerido: **{inicio}** · **Máxima:** {maxd}. {nota}"
-
 sug_txt = []
 for _, row in edit_df.iterrows():
     tip = sugerencia_para(row["fármaco"])
@@ -547,7 +661,7 @@ if sug_txt:
 # ================== Tabs principales ==================
 tab_res, tab_plan, tab_cat, tab_edu = st.tabs(["📊 Resumen", "🧭 Plan terapéutico", "💊 Catálogo", "📚 Educación"])
 
-# --------- RESUMEN (incluye PRO calculadora y guarda variables para PDF) ----------
+# --------- RESUMEN ----------
 with tab_res:
     st.markdown("#### Panorama clínico")
     st.markdown(
@@ -657,14 +771,17 @@ with tab_plan:
 
     # Tratamiento actual (líneas)
     tratamiento_actual_lines = []
-    for _, row in edit_df.iterrows():
+    for _, row in st.session_state[key_data].iterrows():
         clase = str(row.get("clase", "")).strip() or "—"
         farm = str(row.get("fármaco", "")).strip() or "—"
         dosis = str(row.get("dosis actual", "")).strip() or "—"
         freq  = str(row.get("frecuencia", "")).strip() or "—"
         tratamiento_actual_lines.append(f"{clase} · {farm}: {dosis} {freq}")
 
-    titulacion_sugerida_lines = list(sug_txt)
+    titulacion_sugerida_lines = []
+    for _, row in st.session_state[key_data].iterrows():
+        tip = sugerencia_para(row.get("fármaco",""))
+        if tip: titulacion_sugerida_lines.append(f"- {row.get('fármaco','')}: {tip}")
 
     # Utilidades para PDF
     def wrap_lines(c, left, y, width, text, bullet="- "):
