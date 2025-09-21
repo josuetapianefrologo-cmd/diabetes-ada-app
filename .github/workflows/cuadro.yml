@@ -3,7 +3,7 @@ name: Actualizar cuadro básico (semanal)
 on:
   schedule:
     - cron: "0 9 * * 1"   # Lunes 09:00 UTC
-  workflow_dispatch:       # Botón "Run workflow" manual
+  workflow_dispatch:       # Botón manual
 
 permissions:
   contents: write
@@ -18,10 +18,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Instalar deps mínimas
+      - name: Instalar dependencias del proyecto
         run: |
           python -m pip install --upgrade pip
-          pip install pandas requests
+          pip install -r requirements.txt
 
       - name: Generar/actualizar CSV
         run: python scripts/build_csv.py
