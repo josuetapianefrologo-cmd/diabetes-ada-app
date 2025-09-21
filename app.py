@@ -316,53 +316,54 @@ def ui_perfiles_pacientes():
     st.markdown("### 👤 Perfiles de pacientes")
     df = cargar_pacientes()
 
-    cols = st.columns([2,1,1,1,1])
-    with cols[0]:
-        listado = (df["id"] + " — " + df["nombre"]).tolist() if not df.empty else []
-        elegido = st.selectbox("Perfiles guardados", listado, index=0 if listado else None, placeholder="—")
-        id_sel = elegido.split(" — ")[0] if elegido else None
+# --- Botonera compacta (iconos) ---
+    st.markdown("*Acciones rápidas*")
+    bcols = st.columns([1,1,1,1], gap="small")
 
-    with cols[1]:
-        if st.button("📝 Cargar", use_container_width=True, disabled=not id_sel):
-            p = df[df["id"]==id_sel].iloc[0].to_dict()
-            aplicar_a_widgets(p)
-            st.success(f"Perfil '{p.get('nombre','')}' cargado en la interfaz.")
-
-    with cols[2]:
-        if st.button("➕ Nuevo", use_container_width=True):
-            for k in ["nombre","notas_paciente"]:
-                st.session_state[k] = ""
-            st.info("Formulario limpiado. Ingresa datos y guarda como nuevo.")
-
-    with cols[3]:
-        if st.button("💾 Guardar/Actualizar", use_container_width=True):
-            if not ss("local_guardado_aceptado", False):
-                st.error("Debes aceptar el aviso y firmar para habilitar guardado local.")
+    with bcols[0]:
+        if st.button("📂", use_container_width=True, help="Cargar perfil seleccionado", key="btn_load_profile"):
+            if id_sel:
+                p = df[df["id"]==id_sel].iloc[0].to_dict()
+                aplicar_a_widgets(p)
+                st.success(f"Perfil '{p.get('nombre','')}' cargado.")
             else:
-                datos = recolectar_datos_actuales()
-                datos["fecha_ultima_actualizacion"] = datetime.utcnow().strftime("%Y-%m-%d %H:%MZ")
-                if id_sel:
-                    idx = df.index[df["id"]==id_sel]
-                    if len(idx):
-                        datos["id"] = id_sel
-                        for k,v in datos.items():
-                            df.loc[idx, k] = str(v)
-                        guardar_pacientes(df)
-                        st.success(f"Perfil actualizado: {datos['nombre']}")
-                    else:
-                        nuevo = pd.DataFrame([{**datos, "id": _nuevo_id(df)}])
-                        guardar_pacientes(pd.concat([df, nuevo], ignore_index=True))
-                        st.success(f"Perfil creado: {datos['nombre']}")
-                else:
-                    nuevo = pd.DataFrame([{**datos, "id": _nuevo_id(df)}])
-                    guardar_pacientes(pd.concat([df, nuevo], ignore_index=True))
-                    st.success(f"Perfil creado: {datos['nombre']}")
+                st.info("Elige un perfil en la lista.")
+        st.caption("Cargar")
 
-    with cols[4]:
-        if st.button("🗑️ Eliminar", use_container_width=True, type="secondary", disabled=not id_sel):
-            df = df[df["id"]!=id_sel].copy()
-            guardar_pacientes(df)
-            st.warning("Perfil eliminado.")
+    with bcols[1]:
+        if st.button("➕", use_container_width=True, help="Iniciar un nuevo formulario", key="btn_new_profile"):
+            st.session_state["nombre"] = ""
+            st.session_state["notas_paciente"] = ""
+            st.info("Formulario en blanco.")
+        st.caption("Nuevo")
+
+    with bcols[2]:
+        if st.button("💾", use_container_width=True, help="Guardar/actualizar perfil", key="btn_save_profile"):
+            datos = recolectar_datos_actuales()
+            ahora = datetime.utcnow().strftime("%Y-%m-%d %H:%MZ")
+            datos["fecha_ultima_actualizacion"] = ahora
+            if id_sel and (df["id"]==id_sel).any():
+                idx = df.index[df["id"]==id_sel]
+                datos["id"] = id_sel
+                for k,v in datos.items():
+                    df.loc[idx, k] = str(v)
+                guardar_pacientes(df)
+                st.success(f"Perfil actualizado: {datos['nombre']}")
+            else:
+                nuevo = pd.DataFrame([{**datos, "id": _nuevo_id(df)}])
+                guardar_pacientes(pd.concat([df, nuevo], ignore_index=True))
+                st.success(f"Perfil creado: {datos['nombre']}")
+        st.caption("Guardar")
+
+    with bcols[3]:
+        if st.button("🗑️", use_container_width=True, help="Eliminar perfil seleccionado", type="secondary", key="btn_del_profile"):
+            if id_sel:
+                df = df[df["id"]!=id_sel].copy()
+                guardar_pacientes(df)
+                st.warning("Perfil eliminado.")
+            else:
+                st.info("Elige un perfil para eliminar.")
+        st.caption("Eliminar")
 
     # Exportar / Importar
     st.divider()
@@ -499,47 +500,68 @@ st.caption(f"🗂️ Almacenamiento: **{ 'LOCAL' if modo_store=='local' else 'RE
 if modo_store == "local":
     st.caption(f"👤 Firma: **{st.session_state.get('local_medico_firma','—')}**  ·  Equipo: {platform.node()}")
 
-# ================== Metas ==================
-metas = metas_glicemicas_default(edad)
+# ================== Metas con protección de keys ==================
+def _clamp(v: float, lo: float, hi: float, ndigits: int = 1) -> float:
+    """Asegura que v quede entre lo..hi y lo redondea para que number_input no truene."""
+    try:
+        v = float(v)
+    except Exception:
+        v = lo
+    v = max(lo, min(hi, v))
+    return round(v, ndigits)
+
 st.subheader("Metas activas")
-a1c_meta = st.number_input("A1c meta (%)", 5.5, 9.0, metas["A1c_max"], 0.1, key="a1c_meta")
+a1c_meta = st.number_input(
+    "A1c meta (%)",
+    min_value=5.5, max_value=9.0,
+    value=float(metas["A1c_max"]),
+    step=0.1,
+    key="a1c_meta"
+)
 
-pre_min_min  = 3.9 if unidad_gluc == "mmol/L" else 70.0
-pre_min_max  = 22.2 if unidad_gluc == "mmol/L" else 400.0
-pre_max_min  = 5.0 if unidad_gluc == "mmol/L" else 90.0
-pre_max_max  = 22.2 if unidad_gluc == "mmol/L" else 400.0
-pp_max_min   = 6.0 if unidad_gluc == "mmol/L" else 108.0
-pp_max_max   = 22.2 if unidad_gluc == "mmol/L" else 400.0
+# Límites por unidad (todos floats)
+if unidad_gluc == "mmol/L":
+    pre_min_lo, pre_min_hi = 3.5, 22.2
+    pre_max_lo, pre_max_hi = 4.0, 22.2
+    pp_max_lo,  pp_max_hi  = 5.5, 22.2
+    pre_min_def = mgdl_to_mmoll(metas["pre_min"])
+    pre_max_def = mgdl_to_mmoll(metas["pre_max"])
+    pp_max_def  = mgdl_to_mmoll(metas["pp_max"])
+else:
+    pre_min_lo, pre_min_hi = 60.0, 400.0
+    pre_max_lo, pre_max_hi = 70.0, 400.0
+    pp_max_lo,  pp_max_hi  = 100.0, 400.0
+    pre_min_def = float(metas["pre_min"])
+    pre_max_def = float(metas["pre_max"])
+    pp_max_def  = float(metas["pp_max"])
 
-pre_min_def  = mgdl_to_mmoll(metas["pre_min"]) if unidad_gluc == "mmol/L" else metas["pre_min"]
-pre_max_def  = mgdl_to_mmoll(metas["pre_max"]) if unidad_gluc == "mmol/L" else metas["pre_max"]
-pp_max_def   = mgdl_to_mmoll(metas["pp_max"])  if unidad_gluc == "mmol/L" else metas["pp_max"]
+# Asegura que los valores por defecto estén SIEMPRE dentro del rango
+pre_min_def = _clamp(pre_min_def, pre_min_lo, pre_min_hi)
+pre_max_def = _clamp(pre_max_def, pre_max_lo, pre_max_hi)
+pp_max_def  = _clamp(pp_max_def,  pp_max_lo,  pp_max_hi)
 
-pre_min_def = max(pre_min_min, min(pre_min_def, pre_min_max))
-pre_max_def = max(pre_max_min, min(pre_max_def, pre_max_max))
-pp_max_def  = max(pp_max_min,  min(pp_max_def,  pp_max_max))
-
-col_m1, col_m2, col_m3 = st.columns(3)
-with col_m1:
+c1, c2, c3 = st.columns(3)
+with c1:
     pre_min = st.number_input(
         f"Preprandial mín ({unidad_gluc})",
-        min_value=pre_min_min, max_value=pre_min_max, value=pre_min_def, step=0.1,
-        key=f"pre_min_{unidad_gluc}"
+        min_value=pre_min_lo, max_value=pre_min_hi,
+        value=pre_min_def, step=0.1,
+        key=f"pre_min::{unidad_gluc}"   # <- key único por unidad
     )
-with col_m2:
+with c2:
     pre_max = st.number_input(
         f"Preprandial máx ({unidad_gluc})",
-        min_value=pre_max_min, max_value=pre_max_max, value=pre_max_def, step=0.1,
-        key=f"pre_max_{unidad_gluc}"
+        min_value=pre_max_lo, max_value=pre_max_hi,
+        value=pre_max_def, step=0.1,
+        key=f"pre_max::{unidad_gluc}"
     )
-with col_m3:
+with c3:
     pp_max = st.number_input(
         f"Posprandial máx 1–2 h ({unidad_gluc})",
-        min_value=pp_max_min, max_value=pp_max_max, value=pp_max_def, step=0.1,
-        key=f"pp_max_{unidad_gluc}"
+        min_value=pp_max_lo, max_value=pp_max_hi,
+        value=pp_max_def, step=0.1,
+        key=f"pp_max::{unidad_gluc}"
     )
-
-st.caption(f"eGFR (CKD-EPI 2021): **{egfr} mL/min/1.73m²** · UACR: **{uacr} mg/g** ({uacr_cat})")
 
 # ================== Motor de recomendaciones ==================
 def recomendacion_farmacos(tipo_dm, a1c, gl_ay, gl_pp, egfr, ckd, ascvd, ic, imc):
