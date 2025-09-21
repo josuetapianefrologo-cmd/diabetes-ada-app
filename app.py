@@ -511,12 +511,12 @@ def _clamp(v: float, lo: float, hi: float, ndigits: int = 1) -> float:
     return round(v, ndigits)
 
 st.subheader("Metas activas")
-a1c_meta = st.number_input(
+alc_meta = st.number_input(
     "A1c meta (%)",
     min_value=5.5, max_value=9.0,
     value=float(metas["A1c_max"]),
     step=0.1,
-    key="a1c_meta"
+    key="a1c_meta",
 )
 
 # Límites por unidad (todos floats)
@@ -524,6 +524,7 @@ if unidad_gluc == "mmol/L":
     pre_min_lo, pre_min_hi = 3.5, 22.2
     pre_max_lo, pre_max_hi = 4.0, 22.2
     pp_max_lo,  pp_max_hi  = 5.5, 22.2
+
     pre_min_def = mgdl_to_mmoll(metas["pre_min"])
     pre_max_def = mgdl_to_mmoll(metas["pre_max"])
     pp_max_def  = mgdl_to_mmoll(metas["pp_max"])
@@ -531,11 +532,12 @@ else:
     pre_min_lo, pre_min_hi = 60.0, 400.0
     pre_max_lo, pre_max_hi = 70.0, 400.0
     pp_max_lo,  pp_max_hi  = 100.0, 400.0
+
     pre_min_def = float(metas["pre_min"])
     pre_max_def = float(metas["pre_max"])
     pp_max_def  = float(metas["pp_max"])
 
-# Asegura que los valores por defecto estén SIEMPRE dentro del rango
+# Asegurar que los valores por defecto estén SIEMPRE dentro del rango
 pre_min_def = _clamp(pre_min_def, pre_min_lo, pre_min_hi)
 pre_max_def = _clamp(pre_max_def, pre_max_lo, pre_max_hi)
 pp_max_def  = _clamp(pp_max_def,  pp_max_lo,  pp_max_hi)
@@ -546,21 +548,21 @@ with c1:
         f"Preprandial mín ({unidad_gluc})",
         min_value=pre_min_lo, max_value=pre_min_hi,
         value=pre_min_def, step=0.1,
-        key=f"pre_min::{unidad_gluc}"   # <- key único por unidad
+        key=f"pre_min:{unidad_gluc}"   # <- key único por unidad
     )
 with c2:
     pre_max = st.number_input(
         f"Preprandial máx ({unidad_gluc})",
         min_value=pre_max_lo, max_value=pre_max_hi,
         value=pre_max_def, step=0.1,
-        key=f"pre_max::{unidad_gluc}"
+        key=f"pre_max:{unidad_gluc}"
     )
 with c3:
     pp_max = st.number_input(
         f"Posprandial máx 1–2 h ({unidad_gluc})",
         min_value=pp_max_lo, max_value=pp_max_hi,
         value=pp_max_def, step=0.1,
-        key=f"pp_max::{unidad_gluc}"
+        key=f"pp_max:{unidad_gluc}"
     )
 
 # ================== Motor de recomendaciones ==================
