@@ -500,6 +500,32 @@ st.caption(f"🗂️ Almacenamiento: **{ 'LOCAL' if modo_store=='local' else 'RE
 if modo_store == "local":
     st.caption(f"👤 Firma: **{st.session_state.get('local_medico_firma','—')}**  ·  Equipo: {platform.node()}")
 
+# ================== Definición/aseguramiento de 'metas' ==================
+def metas_glicemicas_default(edad: int) -> dict:
+    """Metas por edad (puedes ajustar a tu criterio)."""
+    try:
+        e = int(edad)
+    except Exception:
+        e = 40
+    if e >= 65:
+        return {"A1c_max": 7.5, "pre_min": 80, "pre_max": 130, "pp_max": 180}
+    return {"A1c_max": 7.0, "pre_min": 80, "pre_max": 130, "pp_max": 180}
+
+# Asegura que 'edad' esté definida
+try:
+    _edad_int = int(edad)  # si ya existe 'edad' desde la sidebar, perfecto
+except Exception:
+    _edad_int = 40
+
+# Crea/recupera 'metas' de forma segura
+_metas_ss = st.session_state.get("metas_defaults")
+if not isinstance(_metas_ss, dict) or not _metas_ss:
+    _metas_ss = metas_glicemicas_default(_edad_int)
+    st.session_state["metas_defaults"] = _metas_ss
+
+# Usaremos esta variable 'metas' en los inputs de metas
+metas = _metas_ss
+
 # ================== Metas con protección de keys ==================
 def _clamp(v: float, lo: float, hi: float, ndigits: int = 1) -> float:
     """Asegura que v quede entre lo..hi y lo redondea para que number_input no truene."""
@@ -514,7 +540,7 @@ st.subheader("Metas activas")
 alc_meta = st.number_input(
     "A1c meta (%)",
     min_value=5.5, max_value=9.0,
-    value=float(metas["A1c_max"]),
+    value=float(metas.get("A1c_max", 7.0)),
     step=0.1,
     key="a1c_meta",
 )
@@ -525,17 +551,17 @@ if unidad_gluc == "mmol/L":
     pre_max_lo, pre_max_hi = 4.0, 22.2
     pp_max_lo,  pp_max_hi  = 5.5, 22.2
 
-    pre_min_def = mgdl_to_mmoll(metas["pre_min"])
-    pre_max_def = mgdl_to_mmoll(metas["pre_max"])
-    pp_max_def  = mgdl_to_mmoll(metas["pp_max"])
+    pre_min_def = mgdl_to_mmoll(metas.get("pre_min", 80.0))
+    pre_max_def = mgdl_to_mmoll(metas.get("pre_max", 130.0))
+    pp_max_def  = mgdl_to_mmoll(metas.get("pp_max", 180.0))
 else:
     pre_min_lo, pre_min_hi = 60.0, 400.0
     pre_max_lo, pre_max_hi = 70.0, 400.0
     pp_max_lo,  pp_max_hi  = 100.0, 400.0
 
-    pre_min_def = float(metas["pre_min"])
-    pre_max_def = float(metas["pre_max"])
-    pp_max_def  = float(metas["pp_max"])
+    pre_min_def = float(metasget("pre_min", 80.0))
+    pre_max_def = float(metas.get("pre_max", 130.0))
+    pp_max_def  = float(metas.get("pp_max", 180.0))
 
 # Asegurar que los valores por defecto estén SIEMPRE dentro del rango
 pre_min_def = _clamp(pre_min_def, pre_min_lo, pre_min_hi)
