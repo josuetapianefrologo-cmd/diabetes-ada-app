@@ -7,4 +7,3 @@ scikit-learn==1.5.1
 requests==2.32.3
 beautifulsoup4==4.12.3
 pdfminer.six==20240706
-pillow==10.4.0
