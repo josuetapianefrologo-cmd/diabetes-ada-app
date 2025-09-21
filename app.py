@@ -1,596 +1,704 @@
-# app.py — Diabetes ADA MX (PLUS/PRO + PDFs + Docente)
-# © 2025. Herramienta de apoyo clínico (no sustituye juicio profesional ni guías oficiales).
+# app.py — Diabetes ADA MX (PLUS / PRO) Premium con PDFs, Glosario y Advertencias
+# © 2025. Herramienta de apoyo clínico (no sustituye juicio profesional).
 
 import streamlit as st
 import numpy as np
 import pandas as pd
-from datetime import date, datetime
 from io import BytesIO
+from datetime import date, datetime
+
+# PDFs
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 
-# ================== CONFIG & THEME ==================
-st.set_page_config(page_title="Diabetes ADA MX", page_icon="🩺", layout="wide")
-st.markdown("""
-<style>
-div.block-container { padding-top: 2.75rem; }
-:root { --brand:#0b6cff; --ink:#0f172a; --muted:#475569; --soft:#f1f5f9; }
-html, body, [class*="css"] { font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial; }
-h1,h2,h3 { letter-spacing:-.2px; }
-section[data-testid="stSidebar"] { width:360px !important; }
-.badge { background:var(--soft); color:var(--muted); padding:.18rem .5rem; border-radius:.5rem; font-size:.78rem; }
-.kpi   { background:var(--soft); border:1px solid #e2e8f0; padding:12px 14px; border-radius:12px; }
-hr { border:0; height:1px; background:#e2e8f0; }
-</style>
-""", unsafe_allow_html=True)
+# ================== Apariencia "premium" ==================
+st.set_page_config(
+    page_title="Diabetes ADA MX – PLUS/PRO",
+    page_icon="🩺",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# ================== UTILIDADES MÉDICAS ==================
-def egfr_ckdepi_2021(scr_mgdl: float, age: int, sex: str) -> float:
-    """CKD-EPI 2021 (mg/dL), sin raza."""
-    is_fem = sex.lower().startswith("f")
-    K = 0.7 if is_fem else 0.9
-    a = -0.241 if is_fem else -0.302
-    egfr = 142 * (min(scr_mgdl / K, 1) ** a) * (max(scr_mgdl / K, 1) ** -1.200) * (0.9938 ** age)
-    if is_fem: egfr *= 1.012
-    return float(np.round(egfr, 1))
+st.markdown(
+    """
+    <style>
+      :root{
+        --accent:#2563eb;      /* azul */
+        --muted:#64748b;       /* gris */
+        --bg:#f8fafc;
+        --card:#ffffff;
+        --good:#16a34a;
+        --warn:#f59e0b;
+        --bad:#dc2626;
+      }
+      .block-container{padding-top:2.8rem;}
+      .badge{display:inline-block;padding:.20rem .55rem;border-radius:999px;font-size:.75rem;
+             background:rgba(37,99,235,.10);color:#1d4ed8;border:1px solid rgba(37,99,235,.20);margin-right:.35rem}
+      .muted{color:var(--muted);font-size:.9rem}
+      .card{background:var(--card);padding:1rem 1.1rem;border:1px solid #e5e7eb;border-radius:.8rem}
+      hr{border:0;border-top:1px solid #e5e7eb;margin:1rem 0}
+      .small{font-size:.9rem}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-def metas_glicemicas_default(edad):
-    if edad >= 65:  # meta menos estricta en adultos mayores típicamente
-        return {"A1c_max": 7.5, "pre_min": 80, "pre_max": 130, "pp_max": 180}
-    else:
-        return {"A1c_max": 7.0, "pre_min": 80, "pre_max": 130, "pp_max": 180}
+# ================== Encabezado ==================
+left, mid, right = st.columns([1.4, 0.9, 1.0])
+with left:
+    st.markdown("### 🩺 **Diabetes ADA MX**")
+    st.caption("eGFR CKD-EPI 2021 · Motor de decisiones ADA · PDFs · Modo PLUS/PRO · Modo Docente")
 
-def mmoll_to_mgdl(v):  return None if v is None else round(float(v)*18.0, 1)
-def mgdl_to_mmoll(v):  return None if v is None else round(float(v)/18.0, 1)
+with mid:
+    modo = st.radio(
+        "Modo de trabajo",
+        options=["PLUS", "PRO"],
+        index=0,
+        horizontal=True,
+        help="PRO incluye calculadora 500/1800 y exporta sus parámetros al PDF."
+    )
 
-def bmi(kg, cm):
+with right:
+    docente = st.toggle("🎓 Modo docente", value=False, help="Muestra el 'por qué' y las fórmulas detrás de cada regla.")
+    st.caption("")
+
+# ================== Utilidades ==================
+def mgdl_to_mmoll(v):
     try:
-        m = cm/100
-        return round(kg/(m*m), 1)
+        return round(float(v) / 18.0, 1)
     except Exception:
         return None
 
-# ================== CATÁLOGO ADA (resumen práctico) ==================
-MEDS = [
-    # BIGUANIDA
-    dict(clase="Biguanida", nombre="Metformina", forma="tableta",
-         inicio="500 mg c/12 h con alimentos",
-         paso="↑ 500 mg cada 1–2 semanas según tolerancia GI.",
-         max="2000 mg/d (en 2–3 tomas)",
-         regla_renal="Iniciar/plena si eGFR ≥45; 30–44 máx 1000 mg/d; <30: contraindicada.",
-         clave="metformina"),
-    # SGLT2
-    dict(clase="SGLT2", nombre="Empagliflozina", forma="tableta",
-         inicio="10 mg c/24 h (↑ 25 mg si requiere)",
-         paso="Evaluar respuesta a 4–12 sem.",
-         max="25 mg/d",
-         regla_renal="eGFR ≥20 para protección renal/CV (menor potencia glucémica si eGFR <45).",
-         clave="empa"),
-    dict(clase="SGLT2", nombre="Dapagliflozina", forma="tableta",
-         inicio="10 mg c/24 h",
-         paso="No se recomienda >10 mg/d.",
-         max="10 mg/d",
-         regla_renal="eGFR ≥20 para CKD/IC (potencia glucémica baja si eGFR <45).",
-         clave="dapa"),
-    dict(clase="SGLT2", nombre="Canagliflozina", forma="tableta",
-         inicio="100 mg c/24 h (↑ 300 mg si eGFR lo permite)",
-         paso="Titular si necesita más control (según eGFR).",
-         max="300 mg/d",
-         regla_renal="Dosis según eGFR; revisar guía específica.",
-         clave="cana"),
-    # DPP-4
-    dict(clase="DPP-4", nombre="Linagliptina", forma="tableta",
-         inicio="5 mg c/24 h",
-         paso="Sin titulación.",
-         max="5 mg/d",
-         regla_renal="Sin ajuste por eGFR.",
-         clave="lina"),
-    dict(clase="DPP-4", nombre="Sitagliptina", forma="tableta",
-         inicio="100 mg c/24 h",
-         paso="eGFR 30–44 → 50 mg; eGFR <30 → 25 mg.",
-         max="100 mg/d",
-         regla_renal="Ajuste por eGFR como arriba.",
-         clave="sita"),
-    # GLP-1 RA
-    dict(clase="GLP-1 RA", nombre="Semaglutida s.c.", forma="pluma semanal",
-         inicio="0.25 mg/sem 4 sem → 0.5 mg/sem (→ 1 mg si requiere)",
-         paso="↑ tras 4–8 semanas si no hay náusea/VO.",
-         max="1 mg/sem (formulación estándar)",
-         regla_renal="Sin ajuste por eGFR; evitar si AE GI severos.",
-         clave="sema"),
-    dict(clase="GLP-1 RA", nombre="Dulaglutida s.c.", forma="pluma semanal",
-         inicio="0.75 mg/sem → 1.5 mg/sem",
-         paso="↑ en 4–8 sem.",
-         max="1.5 mg/sem",
-         regla_renal="Sin ajuste por eGFR.",
-         clave="dula"),
-    dict(clase="GLP-1 RA", nombre="Liraglutida s.c.", forma="pluma diaria",
-         inicio="0.6 mg c/24 h 1 sem → 1.2 mg (→ 1.8 mg si requiere)",
-         paso="↑ semanal según tolerancia.",
-         max="1.8 mg/d",
-         regla_renal="Sin ajuste por eGFR.",
-         clave="lira"),
-    # SU
-    dict(clase="SU", nombre="Glipizida", forma="tableta",
-         inicio="2.5–5 mg c/24 h (o c/12 h)",
-         paso="↑ 2.5–5 mg cada 1–2 sem según glucosas.",
-         max="20 mg/d",
-         regla_renal="Preferible en CKD; evitar gliburida.",
-         clave="glip"),
-    # TZD
-    dict(clase="TZD", nombre="Pioglitazona", forma="tableta",
-         inicio="15 mg c/24 h (→ 30–45 mg/d)",
-         paso="↑ cada 4–8 sem según respuesta y edema.",
-         max="45 mg/d",
-         regla_renal="Sin ajuste por eGFR; vigilar IC/edema.",
-         clave="pio"),
-    # INSULINAS
-    dict(clase="Insulina basal", nombre="NPH", forma="vial/pluma",
-         inicio="DM2: 0.1–0.2 U/kg/d (o 10 U/d) de noche",
-         paso="+2 U cada 3 días hasta ayuno 80–130 mg/dL",
-         max="Si >0.5 U/kg y A1c alta → añadir prandial",
-         regla_renal="Vigilar hipoglucemia; ajustar si CKD.",
-         clave="nph"),
-    dict(clase="Insulina basal", nombre="Glargina U100", forma="pluma",
-         inicio="0.1–0.2 U/kg/d (o 10 U/d)",
-         paso="+2 U cada 3 días hasta ayuno meta",
-         max=">0.5 U/kg: considerar prandial",
-         regla_renal="Ajuste por hipoglucemias/CKD.",
-         clave="glarg"),
-    dict(clase="Insulina basal", nombre="Degludec", forma="pluma",
-         inicio="0.1–0.2 U/kg/d",
-         paso="Titulación lenta +2 U cada 3–4 días",
-         max=">0.5 U/kg → prandial",
-         regla_renal="Menor variabilidad; vigilar hipo.",
-         clave="deglu"),
-    dict(clase="Insulina prandial", nombre="Regular", forma="vial/pluma",
-         inicio="4 U en comida principal o 10% de basal",
-         paso="↑ 1–2 U cada 2–3 días según posprandial 2 h",
-         max="Depende de glucosas/CHO",
-         regla_renal="Ajustar si hipoglucemia.",
-         clave="reg"),
-    dict(clase="Insulina prandial", nombre="Aspart/Lispro", forma="pluma",
-         inicio="4 U comida principal (o conteo CHO/ICR)",
-         paso="↑ 1–2 U cada 2–3 días",
-         max="Depende de glucosas/CHO",
-         regla_renal="Acción rápida; ajustar por hipo.",
-         clave="ra"),
+def mmoll_to_mgdl(v):
+    try:
+        return round(float(v) * 18.0, 0)
+    except Exception:
+        return None
+
+def to_mgdl_val(val, unidad):
+    return mmoll_to_mgdl(val) if unidad == "mmol/L" else float(val)
+
+def egfr_ckdepi_2021(scr_mgdl: float, age: int, sex: str) -> float:
+    is_female = str(sex).lower().startswith(("f", "muj"))
+    K = 0.7 if is_female else 0.9
+    a = -0.241 if is_female else -0.302
+    egfr = 142 * (min(scr_mgdl / K, 1) ** a) * (max(scr_mgdl / K, 1) ** -1.200) * (0.9938 ** age)
+    if is_female:
+        egfr *= 1.012
+    return float(np.round(egfr, 1))
+
+def bmi(kg, cm):
+    try:
+        m = cm / 100.0
+        if m <= 0:
+            return None
+        return round(kg / (m * m), 1)
+    except Exception:
+        return None
+
+def uacr_categoria(uacr_mgg):
+    try:
+        v = float(uacr_mgg)
+    except:
+        return "ND"
+    if v < 30: return "A1 (<30 mg/g)"
+    if v < 300: return "A2 (30-299 mg/g)"
+    return "A3 (≥300 mg/g)"
+
+# ================== Catálogo de fármacos (sin instituciones) ==================
+CATALOGO = [
+    # clase, nombre, inicio_sugerido, max_dosis, nota_titulacion
+    ("Metformina", "Metformina", "500 mg c/12 h", "1000 mg c/12 h", "Subir cada 1–2 semanas si tolera GI; con comida."),
+    ("SGLT2i", "Empagliflozina", "10 mg c/24 h", "25 mg c/24 h", "eGFR ≥20 para protección renal/CV; menor efecto glucémico <45."),
+    ("SGLT2i", "Dapagliflozina", "10 mg c/24 h", "10 mg c/24 h", "eGFR ≥20 protección renal/CV; dosis única."),
+    ("SGLT2i", "Canagliflozina", "100 mg c/24 h", "300 mg c/24 h", "Ajustar por eGFR; vigilar pie/óseo."),
+    ("GLP-1 RA", "Semaglutida sc semanal", "0.25 mg/sem", "2.0 mg/sem (DM)", "Subir cada 4 semanas si tolera GI."),
+    ("GLP-1 RA", "Dulaglutida sc semanal", "0.75 mg/sem", "1.5–4.5 mg/sem", "Aumentar gradual cada 4 semanas."),
+    ("GLP-1 RA", "Liraglutida sc diaria", "0.6 mg c/24 h", "1.8 mg c/24 h", "Subir cada 1–2 semanas si tolera."),
+    ("DPP-4", "Linagliptina", "5 mg c/24 h", "5 mg c/24 h", "Sin ajuste renal."),
+    ("DPP-4", "Sitagliptina", "100 mg c/24 h", "100 mg c/24 h", "50 mg si eGFR 30–44; 25 mg si eGFR <30."),
+    ("SU", "Glipizida", "2.5–5 mg c/24 h", "20 mg/día", "Preferir en CKD; menos hipo que gliburida."),
+    ("TZD", "Pioglitazona", "15 mg c/24 h", "45 mg c/24 h", "Vigilar edema/IC."),
+    ("Insulina basal", "NPH", "10 U/d", "—", "Titular +2 U cada 3 días hasta ayuno 80–130 mg/dL."),
+    ("Insulina basal", "Glargina U100", "10 U/d", "—", "Titular +2 U cada 3 días; si >0.5 U/kg/d considerar bolo."),
+    ("Insulina basal", "Degludec", "10 U/d", "—", "Similar a glargina; larga duración."),
+    ("Insulina prandial", "Regular", "4 U/comida", "—", "Añadir si A1c alta con ayuno OK o basal >0.5 U/kg/d."),
+    ("Insulina prandial", "Aspart/Lispro", "4 U/comida", "—", "Reglas 500/1800 o según CGM."),
 ]
-CAT = pd.DataFrame(MEDS)
+CLASES = sorted(list({c for c,_,_,_,_ in CATALOGO}))
 
-def lista_por_clase(clase):
-    return CAT.loc[CAT["clase"]==clase, "nombre"].tolist()
+def alternativas_de_clase(clase, excluir=None):
+    out = [d for d in CATALOGO if d[0] == clase]
+    if excluir:
+        out = [d for d in out if d[1] != excluir]
+    return out
 
-# ================== SIDEBAR: PACIENTE ==================
+# ================== Sidebar (datos del paciente) ==================
 with st.sidebar:
     st.header("Paciente")
-    unidad_gluc = st.selectbox("Unidades de glucosa", ["mg/dL","mmol/L"])
+    unidad_gluc = st.selectbox("Unidades de glucosa", ["mg/dL", "mmol/L"])
     nombre = st.text_input("Nombre", "")
-    edad = st.number_input("Edad (años)", 18, 100, 55)
-    sexo = st.selectbox("Sexo biológico", ["Femenino","Masculino"])
-    dx = st.selectbox("Diagnóstico", ["DM2","DM1"])
-    peso = st.number_input("Peso (kg)", 30.0, 250.0, 80.0, step=0.5)
-    talla = st.number_input("Talla (cm)", 120, 220, 170)
-    imc = bmi(peso, talla)
-    st.caption(f"IMC: {imc if imc is not None else 'ND'} kg/m²")
-    a1c = st.number_input("A1c (%)", 4.0, 15.0, 8.2, step=0.1)
+    edad = st.number_input("Edad (años)", 18, 100, 55, key="edad")
+    sexo = st.selectbox("Sexo biológico", ["Femenino", "Masculino"])
+    dx = st.selectbox("Diagnóstico", ["DM2", "DM1"])
+    peso = st.number_input("Peso (kg)", 25.0, 300.0, 80.0, step=0.5, key="peso")
+    talla = st.number_input("Talla (cm)", 120, 230, 170, key="talla")
+    imc_val = bmi(peso, talla)
+    st.caption(f"IMC: **{imc_val if imc_val else 'ND'} kg/m²**")
 
-    ga_in = st.number_input(f"Glucosa en ayunas ({unidad_gluc})",
-                             2.0 if unidad_gluc=="mmol/L" else 40.0,
-                             33.3 if unidad_gluc=="mmol/L" else 600.0,
-                             8.3 if unidad_gluc=="mmol/L" else 150.0)
-    pp_in = st.number_input(f"Glucosa 120 min ({unidad_gluc})",
-                             2.0 if unidad_gluc=="mmol/L" else 40.0,
-                             33.3 if unidad_gluc=="mmol/L" else 600.0,
-                             10.5 if unidad_gluc=="mmol/L" else 180.0)
-    gluc_ay = mmoll_to_mgdl(ga_in) if unidad_gluc=="mmol/L" else ga_in
-    gluc_pp = mmoll_to_mgdl(pp_in) if unidad_gluc=="mmol/L" else pp_in
+    a1c = st.number_input("A1c (%)", 4.0, 15.0, 8.2, step=0.1, key="a1c")
 
-    scr = st.number_input("Creatinina sérica (mg/dL)", 0.2, 12.0, 1.1, step=0.1)
-    egfr = egfr_ckdepi_2021(scr, int(edad), sexo)
-    st.markdown(f'<div class="kpi">eGFR (CKD-EPI 2021): <b>{egfr}</b> mL/min/1.73 m²</div>', unsafe_allow_html=True)
+    # Rango seguro por unidad (y keys por unidad para evitar crash)
+    ay_min = 2.0 if unidad_gluc == "mmol/L" else 50.0
+    ay_max = 33.3 if unidad_gluc == "mmol/L" else 600.0
+    pp_min = 2.0 if unidad_gluc == "mmol/L" else 50.0
+    pp_maxx = 33.3 if unidad_gluc == "mmol/L" else 600.0
 
-    tiene_ckd = st.checkbox("Enfermedad renal crónica (CKD)")
-    ascvd = st.checkbox("Enfermedad cardiovascular (IAM/angina/ictus/PAD)")
-    ic = st.checkbox("Insuficiencia cardiaca (IC)")
+    gluc_ayunos = st.number_input(
+        f"Glucosa en ayunas ({unidad_gluc})", min_value=ay_min, max_value=ay_max,
+        value=8.3 if unidad_gluc == "mmol/L" else 150.0,
+        key=f"ay_{unidad_gluc}"
+    )
+    gluc_pp_in = st.number_input(
+        f"Glucosa 120 min ({unidad_gluc})", min_value=pp_min, max_value=pp_maxx,
+        value=10.5 if unidad_gluc == "mmol/L" else 190.0,
+        key=f"pp_{unidad_gluc}"
+    )
+    gluc_ayunas = to_mgdl_val(gluc_ayunos, unidad_gluc)
+    gluc_pp = to_mgdl_val(gluc_pp_in, unidad_gluc)
 
-    metas = metas_glicemicas_default(edad)
-    st.subheader("Metas ADA (ajustables)")
-    a1c_meta = st.number_input("A1c meta (%)", 5.5, 9.0, metas["A1c_max"], 0.1)
-    pre_min = st.number_input(f"Preprandial mín ({unidad_gluc})",
-                              3.9 if unidad_gluc=="mmol/L" else 70.0,
-                              22.2 if unidad_gluc=="mmol/L" else 400.0,
-                              mgdl_to_mmoll(metas["pre_min"]) if unidad_gluc=="mmol/L" else metas["pre_min"])
-    pre_max = st.number_input(f"Preprandial máx ({unidad_gluc})",
-                              5.6 if unidad_gluc=="mmol/L" else 100.0,
-                              22.2 if unidad_gluc=="mmol/L" else 400.0,
-                              mgdl_to_mmoll(metas["pre_max"]) if unidad_gluc=="mmol/L" else metas["pre_max"])
-    pp_max = st.number_input(f"Posprandial máx 1–2 h ({unidad_gluc})",
-                              6.7 if unidad_gluc=="mmol/L" else 120.0,
-                              22.2 if unidad_gluc=="mmol/L" else 400.0,
-                              mgdl_to_mmoll(metas["pp_max"]) if unidad_gluc=="mmol/L" else metas["pp_max"])
+    scr = st.number_input("Creatinina sérica (mg/dL)", 0.2, 12.0, 1.0, step=0.1, key="scr")
+    uacr = st.number_input("UACR (mg/g)", 0.0, 10000.0, 20.0, step=1.0, key="uacr")
+    uacr_cat = uacr_categoria(uacr)
+    ascvd = st.checkbox("ASCVD (IAM/angina/ictus/PAD)")
+    ic = st.checkbox("Insuficiencia cardiaca")
+    ckd_conocida = st.checkbox("CKD conocida")
 
-# ================== TOP BAR: PLUS/PRO + Docente ==================
-if "modo" not in st.session_state: st.session_state["modo"] = "PLUS"
-if "docente" not in st.session_state: st.session_state["docente"] = False
+# ================== Cálculos básicos ==================
+egfr = egfr_ckdepi_2021(scr, int(edad), sexo)
 
-top_l, top_r = st.columns([4,2])
-with top_l:
-    st.session_state["modo"] = st.radio("Modo", ["PLUS","PRO"], horizontal=True,
-                                        index=0 if st.session_state["modo"]=="PLUS" else 1,
-                                        help="PLUS: guía simplificada | PRO: calculadora 500/1800, etc.")
-with top_r:
-    st.session_state["docente"] = st.toggle("🧪 Modo docente", value=st.session_state["docente"],
-                                            help="Explica por qué y cómo se hacen los cálculos (con fórmulas y bibliografía).")
+def metas_glicemicas_default(edad):
+    if edad >= 65:
+        return {"A1c_max": 7.5, "pre_min": 80, "pre_max": 130, "pp_max": 180}
+    return {"A1c_max": 7.0, "pre_min": 80, "pre_max": 130, "pp_max": 180}
 
-modo = st.session_state["modo"]
-modo_docente = st.session_state["docente"]
+metas = metas_glicemicas_default(edad)
 
-st.title("Diabetes ADA MX")
-st.caption("eGFR CKD-EPI 2021 · Motor de decisiones ADA · Inicio y titulación de fármacos · Calculadora PRO · PDFs")
+# ================== Metas con protección de keys ==================
+st.subheader("Metas activas")
+a1c_meta = st.number_input("A1c meta (%)", 5.5, 9.0, metas["A1c_max"], 0.1, key="a1c_meta")
 
-# ================== MOTOR DE RECOMENDACIÓN ==================
-def plan_terapeutico(dx, a1c, ga, gpp, egfr, ckd, ascvd, ic):
-    rec, just = [], []
-    if dx == "DM1":
-        rec += ["Insulina basal-bolo o sistemas AID; educación y conteo de carbohidratos.",
-                "Ajustar correcciones si posprandiales > meta."]
-        just += ["DM1 requiere insulina; orales/incretinas no sustituyen insulina."]
-        return rec, just
+pre_min_min  = 3.9 if unidad_gluc == "mmol/L" else 70.0
+pre_min_max  = 22.2 if unidad_gluc == "mmol/L" else 400.0
+pre_max_min  = 5.0 if unidad_gluc == "mmol/L" else 90.0
+pre_max_max  = 22.2 if unidad_gluc == "mmol/L" else 400.0
+pp_max_min   = 6.0 if unidad_gluc == "mmol/L" else 108.0
+pp_max_max   = 22.2 if unidad_gluc == "mmol/L" else 400.0
 
-    if (a1c is not None and a1c >= 10) or (ga is not None and ga >= 300):
-        rec.append("**Iniciar/optimizar insulina** (basal ± prandial) desde el inicio.")
-        just.append("A1c ≥10% o ayunas ≥300 mg/dL o síntomas catabólicos.")
-        return rec, just
+pre_min_def  = mgdl_to_mmoll(metas["pre_min"]) if unidad_gluc == "mmol/L" else metas["pre_min"]
+pre_max_def  = mgdl_to_mmoll(metas["pre_max"]) if unidad_gluc == "mmol/L" else metas["pre_max"]
+pp_max_def   = mgdl_to_mmoll(metas["pp_max"])  if unidad_gluc == "mmol/L" else metas["pp_max"]
 
+pre_min_def = max(pre_min_min, min(pre_min_def, pre_min_max))
+pre_max_def = max(pre_max_min, min(pre_max_def, pre_max_max))
+pp_max_def  = max(pp_max_min,  min(pp_max_def,  pp_max_max))
+
+col_m1, col_m2, col_m3 = st.columns(3)
+with col_m1:
+    pre_min = st.number_input(
+        f"Preprandial mín ({unidad_gluc})",
+        min_value=pre_min_min, max_value=pre_min_max, value=pre_min_def, step=0.1,
+        key=f"pre_min_{unidad_gluc}"
+    )
+with col_m2:
+    pre_max = st.number_input(
+        f"Preprandial máx ({unidad_gluc})",
+        min_value=pre_max_min, max_value=pre_max_max, value=pre_max_def, step=0.1,
+        key=f"pre_max_{unidad_gluc}"
+    )
+with col_m3:
+    pp_max = st.number_input(
+        f"Posprandial máx 1–2 h ({unidad_gluc})",
+        min_value=pp_max_min, max_value=pp_max_max, value=pp_max_def, step=0.1,
+        key=f"pp_max_{unidad_gluc}"
+    )
+
+st.caption(f"eGFR (CKD-EPI 2021): **{egfr} mL/min/1.73m²** · UACR: **{uacr} mg/g** ({uacr_cat})")
+
+# ================== Motor de recomendaciones ==================
+def recomendacion_farmacos(tipo_dm, a1c, gl_ay, gl_pp, egfr, ckd, ascvd, ic, imc):
+    lines, just = [], []
+    if tipo_dm == "DM1":
+        lines.append("DM1 → necesario esquema con **insulina basal-bolo** o sistema AID; educación y conteo de carbohidratos.")
+        if docente:
+            just.append("DM1 depende de insulina exógena – los orales no cubren el déficit absoluto.")
+        return lines, just
+
+    if (a1c is not None and a1c > 10) or (gl_ay is not None and gl_ay >= 300):
+        lines.append("**Iniciar/optimizar insulina** (basal ± prandial) desde el inicio.")
+        if docente: just.append("A1c >10% o glucosa ≥300 mg/dL o síntomas catabólicos.")
     if ic:
-        rec.append("Priorizar **SGLT2** (empagliflozina/dapagliflozina) por beneficio en IC.")
+        lines.append("**IC** → priorizar **SGLT2i** (beneficio en IC).")
+        if docente: just.append("SGLT2i reduce hospitalización por IC.")
     if ascvd:
-        rec.append("Preferir **GLP-1 RA** (semaglutida/dulaglutida/liraglutida) con beneficio CV.")
-    if ckd or egfr < 60:
+        lines.append("**ASCVD** → **GLP-1 RA** con beneficio CV o **SGLT2i**.")
+    if imc and imc >= 30:
+        lines.append("**Obesidad** → preferir **GLP-1 RA** por efecto en peso.")
+    if (ckd or egfr < 60):
         if egfr >= 20:
-            rec.append("**SGLT2** para protección renal/CV (eGFR ≥20); combinar GLP-1 RA si requiere control.")
+            lines.append("**CKD** → agregar **SGLT2i** para protección renal/CV (eGFR ≥20).")
+            if docente: just.append("Eficacia hipoglucemiante menor si eGFR <45, pero beneficio renal/CV persiste.")
         else:
-            rec.append("CKD avanzada (eGFR <20): preferir **GLP-1 RA** para control glucémico.")
-    if a1c is not None:
-        if a1c >= 9:
-            rec.append("Terapia dual: **Metformina + (GLP-1 RA o SGLT2)**; valorar basal si síntomas.")
-        elif a1c >= 7.5:
-            rec.append("Metformina + (GLP-1 RA o SGLT2)** como adición temprana si no a meta.")
-        else:
-            rec.append("**Monoterapia con Metformina** y hábitos; escalar si no alcanza meta.")
-    if gpp is not None and gpp > (pp_max if unidad_gluc=="mg/dL" else mmoll_to_mgdl(pp_max)):
-        rec.append("Posprandiales elevadas: considerar **GLP-1 RA** o **bolo prandial**.")
+            lines.append("**CKD avanzada** (eGFR <20) → preferir **GLP-1 RA** para control glucémico.")
+        if "A2" in uacr_cat or "A3" in uacr_cat:
+            lines.append("**Albuminuria A2/A3** → IECA/ARA2 si procede.")
     if egfr >= 45:
-        rec.append("Metformina: plena si tolera (eGFR ≥45).")
+        lines.append("**Metformina** útil y segura (eGFR ≥45).")
     elif 30 <= egfr < 45:
-        rec.append("Metformina: si ya la usaba, máx 1000 mg/d; evitar iniciar.")
+        lines.append("Metformina si ya la usaba → **máx 1000 mg/d**; **evitar iniciar** en 30–44.")
     else:
-        rec.append("Metformina **contraindicada** si eGFR <30.")
-    return rec, just
+        lines.append("**Metformina contraindicada** eGFR <30.")
+    # Posprandial
+    umbral_pp = pp_max if unidad_gluc == "mg/dL" else mmoll_to_mgdl(pp_max)
+    if gl_pp and gl_pp > umbral_pp:
+        lines.append("**Posprandial alta** → GLP-1 RA o añadir **bolo prandial**; revisar raciones/tiempos.")
+    # Si bajo riesgo global
+    if not (ic or ascvd or ckd or egfr < 60) and not ((a1c and a1c > a1c_meta) and (gl_ay and gl_ay > 130)):
+        lines.append("**Metformina** + estilo de vida; valorar **GLP-1 RA** o **SGLT2i** si no se alcanza meta.")
+    return lines, just
 
-st.subheader("Plan terapéutico (ADA) — priorización por riesgo")
-recs, justs = plan_terapeutico(dx, a1c, gluc_ay, gluc_pp, egfr, tiene_ckd, ascvd, ic)
-c1, c2 = st.columns(2)
-with c1:
-    for r in recs: st.markdown(f"- {r}")
-with c2:
-    if justs:
-        st.markdown("**Justificación (resumen):**")
-        for j in justs: st.markdown(f"• {j}")
-
-# ================== MEDICAMENTOS ACTUALES Y TITULACIÓN ==================
-st.subheader("Medicamentos actuales y titulación")
-st.caption("Indica lo que usa el paciente para sugerir incremento, dosis máxima o adición de otro agente.")
-nombres = CAT["nombre"].tolist()
-seleccion = st.multiselect("Medicamentos que usa actualmente", nombres, default=[])
-
-def tip_titulacion(row, egfr, a1c, ga, gpp):
-    n, c = row["nombre"], row["clase"]
-    out = []
-    if row["clave"] == "metformina":
-        if egfr < 30:
-            out.append("Suspender/evitar: eGFR <30.")
-        elif 30 <= egfr < 45:
-            out.append("Máx **1000 mg/d** (si ya la usaba).")
-        else:
-            out.append("Aumentar hasta **2000 mg/d** si tolera GI (en 2–3 tomas).")
-        if a1c and a1c > a1c_meta: out.append("Añadir **GLP-1 RA** o **SGLT2** si no a meta.")
-    elif row["clave"] in ["empa","dapa","cana"]:
-        if egfr >= 20:
-            out.append(f"Iniciar/continuar: {row['inicio']} (máx {row['max']}).")
-            if egfr < 45: out.append("Potencia glucémica menor con eGFR <45; beneficio renal/CV persiste.")
-            if a1c and a1c > a1c_meta: out.append("Combinar con **GLP-1 RA** si requiere más control.")
-        else:
-            out.append("eGFR <20: priorizar **GLP-1 RA**.")
-    elif row["clave"] == "lina":
-        out.append("**5 mg c/24 h** (sin ajuste por eGFR).")
-    elif row["clave"] == "sita":
-        if egfr >= 45: out.append("**100 mg c/24 h**.")
-        elif 30 <= egfr < 45: out.append("**50 mg c/24 h**.")
-        else: out.append("**25 mg c/24 h**.")
-    elif row["clave"] in ["sema","dula","lira"]:
-        out.append(f"Escalonar: {row['inicio']} (máx {row['max']}). Vigilar náusea/VO.")
-        if gpp and gpp > (pp_max if unidad_gluc=='mg/dL' else mmoll_to_mgdl(pp_max)):
-            out.append("Si PP alta pese a GLP-1 RA → considerar **bolo prandial**.")
-    elif row["clave"] == "glip":
-        out.append("Titular 2.5–5 mg cada 1–2 sem; **máx 20 mg/d**. Vigilar hipoglucemia.")
-    elif row["clave"] == "pio":
-        out.append("↑ a **30–45 mg/d** si requiere (vigilar edema/IC).")
-    elif row["clave"] in ["nph","glarg","deglu"]:
-        base = max(10, round(0.1 * peso))
-        out += [f"Basal sugerida: **{base} U/d** (0.1–0.2 U/kg).",
-                "Titulación: **+2 U cada 3 días** hasta ayuno 80–130 mg/dL.",
-                "Si basal >0.5 U/kg y A1c alta → añadir **prandial**."]
-    elif row["clave"] in ["reg","ra"]:
-        out += ["Inicio: **4 U** en comida principal (o 10% de basal).",
-                "↑ 1–2 U cada 2–3 días según PP 2 h."]
-    else:
-        out.append("Consultar ficha técnica para titulación detallada.")
-    return " ".join(out)
-
-if seleccion:
-    cA, cB = st.columns([1.2, 1.4])
-    with cA:
-        st.markdown("**Titulación sugerida por medicamento**")
-        for nom in seleccion:
-            row = CAT[CAT["nombre"]==nom].iloc[0]
-            st.markdown(f"- **{row['nombre']}** ({row['clase']}): {tip_titulacion(row, egfr, a1c, gluc_ay, gluc_pp)}  \n"
-                        f"  _Notas_: {row['regla_renal']}")
-    with cB:
-        st.markdown("**Alternativas por clase (si no disponible/intolerancia)**")
-        clases = CAT.loc[CAT["nombre"].isin(seleccion),"clase"].unique().tolist()
-        for cl in clases:
-            opciones = lista_por_clase(cl)
-            alt = st.selectbox(f"Alternativa en **{cl}**", opciones, key=f"alt_{cl}")
-            r = CAT[CAT["nombre"]==alt].iloc[0]
-            st.caption(f"Sugerencia: {r['inicio']} — Máx {r['max']}. {r['regla_renal']}")
-else:
-    st.info("Selecciona medicamentos actuales para ver **titulación** y **alternativas**.")
-
-# ================== PRO: CALCULADORA 500/1800 ==================
-st.subheader("Modo PRO — Calculadora de bolo (reglas 500/1800)")
-st.caption("ICR ≈ 500/TDD (g/U) · CF ≈ 1800/TDD (mg/dL por 1 U). Úsalo como aproximación inicial y ajusta por SMBG/CGM.")
-c1, c2, c3 = st.columns(3)
-with c1:
-    tdd_manual = st.number_input("TDD (U/d) si ya usa insulina (opcional)", 0.0, 300.0, 0.0, step=1.0)
-with c2:
-    tdd = tdd_manual if tdd_manual>0 else round((0.5 if dx=="DM1" else 0.3) * peso, 1)
-    st.write(f"**TDD estimada**: {tdd} U/d")
-with c3:
-    st.write("")
-
-icr_auto = round(500.0/tdd,1) if tdd>0 else 0.0
-cf_auto  = round(1800.0/tdd,0) if tdd>0 else 0.0
-
-colc1, colc2, colc3 = st.columns(3)
-with colc1:
-    icr = st.number_input("ICR (g/U) — deja 0 para usar 500/TDD", 0.0, 200.0, 0.0, step=0.5)
-    if icr==0: icr = icr_auto; st.caption(f"ICR usado: **{icr} g/U**")
-with colc2:
-    cf = st.number_input("CF (mg/dL por 1 U) — deja 0 para usar 1800/TDD", 0.0, 500.0, 0.0, step=1.0)
-    if cf==0: cf = cf_auto; st.caption(f"CF usado: **{cf} mg/dL/U**")
-with colc3:
-    objetivo = st.number_input(f"Glucosa objetivo ({unidad_gluc})",
-                               4.4 if unidad_gluc=="mmol/L" else 80.0,
-                               11.1 if unidad_gluc=="mmol/L" else 200.0,
-                               6.1 if unidad_gluc=="mmol/L" else 110.0)
-
-cola, colb, colc = st.columns(3)
-with cola:
-    carbs = st.number_input("Carbohidratos de la comida (g)", 0.0, 300.0, 45.0, step=1.0)
-with colb:
-    g_actual_in = st.number_input(f"Glucosa actual ({unidad_gluc})",
-                                  2.0 if unidad_gluc=='mmol/L' else 40.0,
-                                  33.3 if unidad_gluc=='mmol/L' else 600.0,
-                                  8.9 if unidad_gluc=='mmol/L' else 160.0)
-    g_actual = mmoll_to_mgdl(g_actual_in) if unidad_gluc=="mmol/L" else g_actual_in
-with colc:
-    g_obj = mmoll_to_mgdl(objetivo) if unidad_gluc=="mmol/L" else objetivo
-
-def dosis_bolo(carbs_g, g_act_mgdl, g_obj_mgdl, icr, cf):
-    if g_act_mgdl is not None and g_act_mgdl < 70:
-        return 0.0, "Glucosa <70 mg/dL: tratar hipoglucemia primero; no aplicar bolo ahora."
-    carbo = (carbs_g / icr) if icr > 0 else 0.0
-    corr = ((g_act_mgdl - g_obj_mgdl) / cf) if (g_act_mgdl and cf > 0) else 0.0
-    u = max(0.0, carbo + max(0.0, corr))
-    u = round(u * 2) / 2.0
-    nota = "Bolo = carbohidratos/ICR + corrección (reglas 500/1800). Ajustar por actividad física y tendencia CGM."
-    return u, nota
-
-u, nota_bolo = dosis_bolo(carbs, g_actual, g_obj, icr, cf)
-st.metric("Dosis de bolo sugerida", f"{u} U")
-st.caption(nota_bolo)
-
-# ================== PDFs ==================
-def _wraplines(c, left, y, width, text, bullet="- "):
-    for seg in [text[i:i+95] for i in range(0, len(text), 95)]:
-        c.drawString(left, y, f"{bullet}{seg}"); y -= 14
-        if y < 72: c.showPage(); y = letter[1] - 72
-    return y
-
-def pdf_plan(datos_paciente, recomendaciones, justificacion, titulaciones):
-    buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=letter)
-    width, height = letter; L = 1*inch; y = height - 1*inch
-    c.setFont("Helvetica-Bold", 12); c.drawString(L, y, "Plan terapéutico para Diabetes (ADA)"); y -= 22
-    c.setFont("Helvetica", 10)
-    for k, v in datos_paciente.items():
-        y = _wraplines(c, L, y, width, f"{k}: {v}", bullet="")
-    y -= 6; c.setFont("Helvetica-Bold", 11); c.drawString(L, y, "Recomendaciones:"); y -= 16; c.setFont("Helvetica", 10)
-    for line in recomendaciones: y = _wraplines(c, L, y, width, line, bullet="- ")
-    y -= 6; c.setFont("Helvetica-Bold", 11); c.drawString(L, y, "Justificación:"); y -= 16; c.setFont("Helvetica", 10)
-    for line in justificacion: y = _wraplines(c, L, y, width, line, bullet="• ")
-    y -= 6; c.setFont("Helvetica-Bold", 11); c.drawString(L, y, "Titulación y alternativas:"); y -= 16; c.setFont("Helvetica", 10)
-    for line in titulaciones: y = _wraplines(c, L, y, width, line, bullet="• ")
-    c.setFont("Helvetica-Oblique", 8); y -= 10
-    c.drawString(L, y, "Esta hoja no sustituye el juicio clínico. Basado en ADA Standards of Care.")
-    c.save(); buffer.seek(0); return buffer
-
-def pdf_registro_glucosa(nombre, unidad):
-    buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=letter)
-    L = 0.7*inch; top = letter[1] - 0.7*inch
-    c.setFont("Helvetica-Bold", 12); c.drawString(L, top, f"Registro de glucosa capilar (7 días) – Unidades: {unidad}")
-    c.setFont("Helvetica", 10); c.drawString(L, top-16, f"Paciente: {nombre or '—'}    Fecha inicio: {date.today().isoformat()}")
-    cols = ["Día","Ayunas","Des","Comida","Cena","2h Des","2h Com","2h Cena"]; col_w=[0.8,0.8,0.8,0.8,0.8,0.9,0.9,0.9]
-    y = top - 40; c.setFont("Helvetica-Bold", 9)
-    for i,h in enumerate(cols): c.drawString(L + sum(col_w[:i])*inch, y, h)
-    c.setLineWidth(0.5); y -= 4; c.line(L, y, L + sum(col_w)*inch, y)
-    c.setFont("Helvetica", 9)
-    for d in range(1,8):
-        y -= 18; c.drawString(L, y, f"D{d}")
-        for i in range(1,len(cols)): c.drawString(L + sum(col_w[:i])*inch + 4, y, "____")
-        c.line(L, y-4, L + sum(col_w)*inch, y-4)
-    c.save(); buffer.seek(0); return buffer
-
-def pdf_hoja_alta(nombre, unidad):
-    buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=letter)
-    L = 0.7*inch; top = letter[1]-0.7*inch
-    c.setFont("Helvetica-Bold", 12); c.drawString(L, top, "Hoja de alta y señales de alarma")
-    c.setFont("Helvetica", 10); y = top - 16
-    c.drawString(L, y, f"Paciente: {nombre or '—'}    Fecha: {date.today().isoformat()}    Unidades de glucosa: {unidad}"); y -= 16
-    secc = [
-        ("Cuidados generales", [
-            "Tomar los medicamentos según indicación y no suspender sin consultar.",
-            "Monitorear glucosa con la frecuencia indicada; registrar valores.",
-            "Mantener hidratación, alimentación balanceada y actividad física segura."
-        ]),
-        ("Señales de alarma – acudir a urgencias", [
-            f"Hipoglucemia severa (<70 {unidad} con síntomas o pérdida de conciencia).",
-            f"Hiperglucemia persistente: >300 {unidad} repetida o síntomas de cetoacidosis.",
-            "Fiebre alta con foco, dificultad respiratoria o dolor torácico.",
-            "Déficit neurológico súbito (debilidad, dificultad para hablar).",
-            "Vómito persistente, deshidratación marcada."
-        ]),
-        ("Contacto y seguimiento", [
-            "Acudir a su próxima cita de control en la fecha indicada.",
-            "Si hay dudas con el medicamento o efectos adversos, contactar a su unidad de salud."
-        ])
+def basal_init_titration(dx, peso_kg, a1c, alto_riesgo_hipo=False):
+    if dx == "DM1":
+        tdd = round(0.5 * peso_kg, 1)
+        basal = round(tdd * 0.5, 1)
+        prandial = round(tdd * 0.5 / 3, 1)
+        return (f"TDD≈{tdd} U/d. **Basal {basal} U/d**; **prandial {prandial} U** antes de cada comida.",
+                ["Ajustar con SMBG/CGM y conteo CHO.", "Vigilar hipoglucemias nocturnas."])
+    base = max(10, round(0.1 * peso_kg))
+    if a1c and a1c >= 9 and not alto_riesgo_hipo:
+        base = max(base, round(0.2 * peso_kg))
+    reglas = [
+        "Titular **+2 U cada 3 días** hasta ayuno **80–130 mg/dL**.",
+        "Si hipo <70 mg/dL → bajar 10–20%.",
+        "Si A1c alta con ayuno controlado **o** basal >0.5 U/kg/d → añadir **bolo**."
     ]
-    for t, items in secc:
-        y -= 10; c.setFont("Helvetica-Bold", 11); c.drawString(L, y, t); y -= 14; c.setFont("Helvetica", 10)
-        for it in items:
-            for seg in [it[i:i+95] for i in range(0,len(it),95)]:
-                c.drawString(L, y, f"• {seg}"); y -= 14
-                if y < 72: c.showPage(); y = letter[1] - 72
-    c.save(); buffer.seek(0); return buffer
+    return (f"Iniciar insulina basal en **{base} U/d** (0.1–0.2 U/kg/d).", reglas)
 
-st.subheader("Exportables (PDF)")
-colA, colB, colC = st.columns(3)
-with colA:
-    st.markdown("**Plan terapéutico**")
-    # Construimos texto de titulaciones/alternativas si el clínico seleccionó algo
-    tit_lines = []
-    if seleccion:
-        for nom in seleccion:
-            row = CAT[CAT["nombre"]==nom].iloc[0]
-            tit_lines.append(f"{row['nombre']}: {tip_titulacion(row, egfr, a1c, gluc_ay, gluc_pp)}")
+def intensificacion_prandial(basal_ud, peso_kg):
+    umbral = round(0.5 * peso_kg, 1)
+    inicio = max(4, int(round(basal_ud * 0.1)))
+    return [
+        f"Si basal > **{umbral} U/d** o A1c alta con ayuno OK → bolo en comida principal: **{inicio} U**.",
+        "Luego 2 comidas; después 3 (**basal-bolo**).",
+        "Alternativa: **GLP-1 RA** antes del bolo (peso/adhesión)."
+    ]
+
+def ajustes_por_egfr(egfr):
+    out = []
+    if egfr >= 45: out.append("Metformina: **dosis plena** si tolera.")
+    elif 30 <= egfr < 45: out.append("Metformina: si ya estaba, **máx 1000 mg/d**; **evitar iniciar**.")
+    else: out.append("Metformina: **contraindicada** (<30).")
+    if egfr >= 20: out.append("SGLT2i: indicado en T2D+CKD con eGFR ≥20 (beneficio renal/CV).")
+    else: out.append("SGLT2i: evitar iniciar con eGFR <20.")
+    out += [
+        "DPP-4: **linagliptina 5 mg** sin ajuste; **sitagliptina** 50 mg (eGFR 30–44) o 25 mg (<30).",
+        "GLP-1 RA: sema/dula/lira sin ajuste; **evitar exenatida** si eGFR <30.",
+        "SU: preferir **glipizida**; evitar gliburida (hipo).",
+        "TZD: sin ajuste renal; vigilar **edema/IC**."
+    ]
+    return out
+
+# ================== Tratamiento actual y titulación ==================
+st.subheader("Tratamiento actual y titulación")
+st.caption("Registra lo que usa el/la paciente para sugerir escalamiento, dosis máxima o cambio de clase.")
+
+df_cols = ["clase", "fármaco", "dosis actual", "frecuencia"]
+ejemplo = [
+    {"clase":"Metformina", "fármaco":"Metformina", "dosis actual":"850 mg", "frecuencia":"c/12 h"},
+    {"clase":"DPP-4", "fármaco":"Linagliptina", "dosis actual":"5 mg", "frecuencia":"c/24 h"},
+]
+key_data = "tabla_trat"
+if key_data not in st.session_state:
+    st.session_state[key_data] = pd.DataFrame(ejemplo, columns=df_cols)
+
+edit_df = st.data_editor(
+    st.session_state[key_data],
+    num_rows="dynamic",
+    columns={
+        "clase": st.column_config.SelectboxColumn(options=CLASES, required=True),
+        "fármaco": st.column_config.SelectboxColumn(options=[d[1] for d in CATALOGO], required=True),
+        "dosis actual": st.column_config.TextColumn(help="Ej. 850 mg / 10 U"),
+        "frecuencia": st.column_config.TextColumn(help="Ej. c/12 h, c/24 h, desayuno/cena")
+    },
+    use_container_width=True,
+    hide_index=True
+)
+st.session_state[key_data] = edit_df
+
+def sugerencia_para(farmaco):
+    rows = [d for d in CATALOGO if d[1] == farmaco]
+    if not rows:
+        return None
+    c, n, inicio, maxd, nota = rows[0]
+    return f"Inicio sugerido: **{inicio}** · **Máxima:** {maxd}. {nota}"
+
+sug_txt = []
+for _, row in edit_df.iterrows():
+    tip = sugerencia_para(row["fármaco"])
+    if tip:
+        sug_txt.append(f"- {row['fármaco']}: {tip}")
+
+if sug_txt:
+    st.markdown("**Sugerencias de titulación:**")
+    for t in sug_txt:
+        st.markdown(t)
+
+# ================== Tabs principales ==================
+tab_res, tab_plan, tab_cat, tab_edu = st.tabs(["📊 Resumen", "🧭 Plan terapéutico", "💊 Catálogo", "📚 Educación"])
+
+# --------- RESUMEN (incluye PRO calculadora y guarda variables para PDF) ----------
+with tab_res:
+    st.markdown("#### Panorama clínico")
+    st.markdown(
+        f"""
+        <div class="card small">
+        <b>eGFR:</b> {egfr} mL/min/1.73m² · <b>UACR:</b> {uacr} mg/g ({uacr_cat}) · 
+        <b>A1c:</b> {a1c}% · <b>Ayuno:</b> {gluc_ayunos} {unidad_gluc} · 
+        <b>120 min:</b> {gluc_pp_in} {unidad_gluc} · <b>IMC:</b> {imc_val if imc_val else 'ND'} kg/m²
+        </div>
+        """, unsafe_allow_html=True
+    )
+
+    recs, just = recomendacion_farmacos(dx, a1c, gluc_ayunas, gluc_pp, egfr, ckd_conocida, ascvd, ic, imc_val)
+    st.markdown("#### Recomendación terapéutica (ADA – priorización por riesgo)")
+    for r in recs:
+        st.markdown(f"- {r}")
+    if docente and just:
+        st.markdown("**Justificación (docente):**")
+        for j in just:
+            st.markdown(f"• {j}")
+
+    st.markdown("#### Insulina: dosis de inicio y titulación")
+    intro_basal, reglas_basal = basal_init_titration(dx, peso, a1c, alto_riesgo_hipo=False)
+    st.markdown(f"- {intro_basal}")
+    for rr in reglas_basal:
+        st.markdown(f"  - {rr}")
+
+    if dx == "DM2":
+        basal_ref = max(10, round(0.1 * peso))
+        st.markdown("**Intensificación prandial (si A1c persiste alta):**")
+        for p in intensificacion_prandial(basal_ud=basal_ref, peso_kg=peso):
+            st.markdown(f"- {p}")
+
+    st.markdown("#### Ajustes por función renal")
+    for a in ajustes_por_egfr(egfr):
+        st.markdown(f"- {a}")
+
+    # --- PRO: Calculadora + guardar variables en session para PDF ---
+    if modo == "PRO":
+        st.markdown("---")
+        st.markdown("### PRO · Calculadora (reglas 500/1800)")
+        colc1, colc2, colc3 = st.columns(3)
+        with colc1:
+            tdd_man = st.number_input("TDD (U/d) si ya usa insulina", 0.0, 300.0, 0.0, step=1.0, key="tdd_man")
+        tdd = tdd_man if tdd_man > 0 else round((0.5 if dx=="DM1" else 0.3) * peso, 1)
+        with colc2:
+            icr = st.number_input("ICR (g/U) – 0 para 500/TDD", 0.0, 250.0, 0.0, step=0.5, key="icr")
+        with colc3:
+            cf = st.number_input("CF (mg/dL/U) – 0 para 1800/TDD", 0.0, 600.0, 0.0, step=1.0, key="cf")
+        if icr == 0:
+            icr = round(500.0 / tdd, 1) if tdd > 0 else 0.0
+        if cf == 0:
+            cf = round(1800.0 / tdd, 0) if tdd > 0 else 0.0
+        colp1, colp2, colp3 = st.columns(3)
+        with colp1:
+            carbs = st.number_input("Carbohidratos (g)", 0.0, 300.0, 45.0, step=1.0, key="carbs")
+        with colp2:
+            g_act = st.number_input(
+                f"Glucosa actual ({unidad_gluc})",
+                min_value=ay_min, max_value=ay_max,
+                value=8.9 if unidad_gluc=="mmol/L" else 160.0,
+                key=f"gact_{unidad_gluc}"
+            )
+        with colp3:
+            g_obj = st.number_input(
+                f"Glucosa objetivo ({unidad_gluc})",
+                min_value=4.4 if unidad_gluc=="mmol/L" else 70.0,
+                max_value=16.7 if unidad_gluc=="mmol/L" else 300.0,
+                value=6.1 if unidad_gluc=="mmol/L" else 110.0,
+                key=f"gobj_{unidad_gluc}"
+            )
+        g_act_mgdl = to_mgdl_val(g_act, unidad_gluc)
+        g_obj_mgdl = to_mgdl_val(g_obj, unidad_gluc)
+        if g_act_mgdl < 70:
+            st.warning("Glucosa actual <70 mg/dL: tratar hipoglucemia antes de bolo.")
+            dosis_bolo = 0.0
+        else:
+            dosis_bolo = max(
+                0.0,
+                carbs / (icr if icr > 0 else 1e9) + max(0.0, (g_act_mgdl - g_obj_mgdl) / (cf if cf > 0 else 1e9))
+            )
+            dosis_bolo = round(dosis_bolo * 2) / 2.0
+        st.metric("Dosis de bolo sugerida", f"{dosis_bolo} U")
+        if docente:
+            st.caption("Docente: ICR≈500/TDD, CF≈1800/TDD; bolo = CHO/ICR + (Gact−Gobj)/CF. Ajustar con CGM/SMBG y actividad.")
+
+        # Guardar para PDF
+        st.session_state["pro_block"] = {
+            "tdd": tdd, "icr": icr, "cf": cf,
+            "carbs": carbs, "g_act": g_act, "g_obj": g_obj,
+            "g_act_mgdl": g_act_mgdl, "g_obj_mgdl": g_obj_mgdl, "dosis_bolo": dosis_bolo,
+            "unidad": unidad_gluc
+        }
+    else:
+        st.session_state["pro_block"] = None
+
+# --------- PLAN (PDFs) ----------
+with tab_plan:
+    st.markdown("#### Plan terapéutico imprimible")
+    # Construcción de plan y listas
+    recs, just = recomendacion_farmacos(dx, a1c, gluc_ayunas, gluc_pp, egfr, ckd_conocida, ascvd, ic, imc_val)
+    texto_basal, reglas = basal_init_titration(dx, peso, a1c)
+    plan = recs + [f"Inicio de insulina: {texto_basal}"] + reglas
+    if dx == "DM2":
+        plan += intensificacion_prandial(max(10, round(0.1*peso)), peso)
+    plan += ajustes_por_egfr(egfr)
+
+    # Tratamiento actual (líneas)
+    tratamiento_actual_lines = []
+    for _, row in edit_df.iterrows():
+        clase = str(row.get("clase", "")).strip() or "—"
+        farm = str(row.get("fármaco", "")).strip() or "—"
+        dosis = str(row.get("dosis actual", "")).strip() or "—"
+        freq  = str(row.get("frecuencia", "")).strip() or "—"
+        tratamiento_actual_lines.append(f"{clase} · {farm}: {dosis} {freq}")
+
+    titulacion_sugerida_lines = list(sug_txt)
+
+    # Utilidades para PDF
+    def wrap_lines(c, left, y, width, text, bullet="- "):
+        for seg in [text[i:i+95] for i in range(0, len(text), 95)]:
+            c.drawString(left, y, f"{bullet}{seg}")
+            y -= 14
+            if y < 72:
+                c.showPage(); y = letter[1] - 72
+        return y
+
+    def pdf_plan(datos_paciente, tratamiento_actual, titulacion_sugerida, recomendaciones, justificacion, pro_block=None):
+        buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=letter)
+        width, height = letter; left = 1 * inch; y = height - 1 * inch
+
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(left, y, "Plan terapéutico para Diabetes (ADA 2025)")
+        y -= 20
+
+        c.setFont("Helvetica", 10)
+        for k, v in datos_paciente.items():
+            y = wrap_lines(c, left, y, width, f"{k}: {v}", bullet="")
+        y -= 8
+
+        c.setFont("Helvetica-Bold", 11); c.drawString(left, y, "Tratamiento actual:"); y -= 16
+        c.setFont("Helvetica", 10)
+        if not tratamiento_actual:
+            y = wrap_lines(c, left, y, width, "— Sin registros —", bullet="- ")
+        else:
+            for line in tratamiento_actual:
+                y = wrap_lines(c, left, y, width, line, bullet="- ")
+
+        y -= 6; c.setFont("Helvetica-Bold", 11); c.drawString(left, y, "Sugerencias de titulación:"); y -= 16
+        c.setFont("Helvetica", 10)
+        if not titulacion_sugerida:
+            y = wrap_lines(c, left, y, width, "— No hay sugerencias —", bullet="• ")
+        else:
+            for line in titulacion_sugerida:
+                y = wrap_lines(c, left, y, width, line, bullet="• ")
+
+        y -= 6; c.setFont("Helvetica-Bold", 11); c.drawString(left, y, "Recomendaciones ADA:"); y -= 16
+        c.setFont("Helvetica", 10)
+        for line in recomendaciones:
+            y = wrap_lines(c, left, y, width, line, bullet="- ")
+
+        y -= 6; c.setFont("Helvetica-Bold", 11); c.drawString(left, y, "Justificación clínica:"); y -= 16
+        c.setFont("Helvetica", 10)
+        for line in justificacion:
+            y = wrap_lines(c, left, y, width, line, bullet="• ")
+
+        # PRO block (si existe)
+        if pro_block:
+            y -= 6; c.setFont("Helvetica-Bold", 11); c.drawString(left, y, "Cálculos PRO (500/1800):"); y -= 16
+            c.setFont("Helvetica", 10)
+            unidad = pro_block.get("unidad", "mg/dL")
+            items = [
+                f"TDD usada: {pro_block.get('tdd','—')} U/d",
+                f"ICR: {pro_block.get('icr','—')} g/U",
+                f"CF: {pro_block.get('cf','—')} mg/dL/U",
+                f"Carbohidratos: {pro_block.get('carbs','—')} g",
+                f"Glucosa actual: {pro_block.get('g_act','—')} {unidad}",
+                f"Objetivo: {pro_block.get('g_obj','—')} {unidad}",
+                f"Dosis de bolo sugerida: {pro_block.get('dosis_bolo','—')} U"
+            ]
+            for line in items:
+                y = wrap_lines(c, left, y, width, line, bullet="• ")
+
+        c.setFont("Helvetica-Oblique", 8); y -= 10
+        c.drawString(left, y, "Basado en ADA Standards of Care 2025; esta hoja no sustituye el juicio clínico.")
+        c.save(); buffer.seek(0); return buffer
+
+    def pdf_registro(nombre, unidad):
+        buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=letter)
+        left = 0.7 * inch; top = letter[1] - 0.7 * inch
+        c.setFont("Helvetica-Bold", 12); c.drawString(left, top, f"Registro de glucosa capilar (7 días) – Unidades: {unidad}")
+        c.setFont("Helvetica", 10); c.drawString(left, top - 16, f"Paciente: {nombre}    Fecha inicio: {date.today().isoformat()}")
+        cols = ["Día","Ayunas","Des","Comida","Cena","2h Des","2h Com","2h Cena"]; col_w = [0.8,0.8,0.8,0.8,0.8,0.9,0.9,0.9]
+        y = top - 40; c.setFont("Helvetica-Bold", 9)
+        for i, h in enumerate(cols): c.drawString(left + sum(col_w[:i])*inch, y, h)
+        c.setLineWidth(0.5); y -= 4; c.line(left, y, left + sum(col_w)*inch, y)
+        c.setFont("Helvetica", 9)
+        for d in range(1, 8):
+            y -= 18; c.drawString(left, y, f"D{d}")
+            for i in range(1, len(cols)): c.drawString(left + sum(col_w[:i])*inch + 4, y, "____")
+            c.line(left, y-4, left + sum(col_w)*inch, y-4)
+        c.save(); buffer.seek(0); return buffer
+
+    def pdf_alta(nombre, unidad):
+        buffer = BytesIO(); c = canvas.Canvas(buffer, pagesize=letter)
+        left = 0.7 * inch; top = letter[1] - 0.7 * inch
+        c.setFont("Helvetica-Bold", 12); c.drawString(left, top, "Hoja de alta y señales de alarma")
+        c.setFont("Helvetica", 10); y = top - 16
+        c.drawString(left, y, f"Paciente: {nombre}    Fecha: {date.today().isoformat()}    Unidades: {unidad}"); y -= 16
+        secciones = [
+            ("Cuidados generales", [
+                "Tomar medicamentos según indicación; no suspender sin consultar.",
+                "Monitorear glucosa con la frecuencia indicada; registrar valores.",
+                "Hidratación, alimentación balanceada y actividad física segura."
+            ]),
+            ("Señales de alarma – acudir a urgencias", [
+                f"Hipoglucemia severa: glucosa <70 {unidad} con síntomas o pérdida de conciencia.",
+                f"Hiperglucemia persistente: >300 {unidad} repetida o síntomas de cetoacidosis.",
+                "Infección grave, dolor torácico, déficit neurológico súbito, deshidratación marcada."
+            ])
+        ]
+        for titulo, items in secciones:
+            y -= 10; c.setFont("Helvetica-Bold", 11); c.drawString(left, y, titulo); y -= 14; c.setFont("Helvetica", 10)
+            for it in items:
+                for seg in [it[i:i+95] for i in range(0, len(it), 95)]:
+                    c.drawString(left, y, f"• {seg}"); y -= 14
+                    if y < 72: c.showPage(); y = letter[1] - 72
+        c.save(); buffer.seek(0); return buffer
+
     datos = {
         "Nombre": nombre or "—",
-        "Edad/Sexo": f"{edad} · {sexo}",
-        "Dx": dx,
-        "Peso/Talla/IMC": f"{peso} kg / {talla} cm / {imc if imc is not None else 'ND'} kg/m²",
+        "Edad": f"{edad} años",
+        "Sexo": sexo,
+        "Diagnóstico": dx,
+        "Peso/Talla/IMC": f"{peso} kg / {talla} cm / {imc_val if imc_val else 'ND'} kg/m²",
         "A1c": f"{a1c} %",
-        "Ayunas": f"{ga_in} {unidad_gluc}",
-        "Posprandial 120 min": f"{pp_in} {unidad_gluc}",
+        "Ayunas": f"{gluc_ayunos} {unidad_gluc}",
+        "Posprandial 120 min": f"{gluc_pp_in} {unidad_gluc}",
         "Creatinina": f"{scr} mg/dL",
         "eGFR (CKD-EPI 2021)": f"{egfr} mL/min/1.73 m²",
-        "ASCVD/IC/CKD": f"{'Sí' if ascvd else 'No'} / {'Sí' if ic else 'No'} / {'Sí' if tiene_ckd else 'No'}",
-        "Modo": st.session_state["modo"],
+        "UACR": f"{uacr} mg/g ({uacr_cat})",
         "Fecha": date.today().isoformat()
     }
-    if st.button("Generar PDF plan"):
-        pdf = pdf_plan(datos, recs, justs, tit_lines)
-        st.download_button("Descargar plan.pdf", data=pdf, file_name="plan_tratamiento_diabetes.pdf", mime="application/pdf")
-with colB:
-    st.markdown("**Registro de glucosa (7 días)**")
-    if st.button("Generar PDF registro"):
-        pdf = pdf_registro_glucosa(nombre or "—", unidad_gluc)
-        st.download_button("Descargar registro.pdf", data=pdf, file_name="registro_glucosa_capilar.pdf", mime="application/pdf")
-with colC:
-    st.markdown("**Hoja de alta**")
-    if st.button("Generar PDF de alta"):
-        pdf = pdf_hoja_alta(nombre or "—", unidad_gluc)
-        st.download_button("Descargar alta.pdf", data=pdf, file_name="hoja_alta_diabetes.pdf", mime="application/pdf")
 
-# ================== DOCENTE ==================
-if modo_docente:
-    st.divider()
-    st.header("🧪 Modo Docente")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("Generar PDF del plan"):
+            pdf_bytes = pdf_plan(
+                datos_paciente=datos,
+                tratamiento_actual=tratamiento_actual_lines,
+                titulacion_sugerida=titulacion_sugerida_lines,
+                recomendaciones=plan,
+                justificacion=just,
+                pro_block=st.session_state.get("pro_block")
+            )
+            st.download_button("Descargar plan.pdf", data=pdf_bytes, file_name="plan_tratamiento_diabetes.pdf", mime="application/pdf")
+    with c2:
+        if st.button("Generar PDF de registro"):
+            pdf_reg = pdf_registro(nombre or "—", unidad_gluc)
+            st.download_button("Descargar registro.pdf", data=pdf_reg, file_name="registro_glucosa_capilar.pdf", mime="application/pdf")
+    with c3:
+        if st.button("Generar PDF hoja de alta"):
+            pdf_ha = pdf_alta(nombre or "—", unidad_gluc)
+            st.download_button("Descargar alta.pdf", data=pdf_ha, file_name="hoja_alta_diabetes.pdf", mime="application/pdf")
+
+# --------- CATÁLOGO ----------
+with tab_cat:
+    st.markdown("#### Medicamentos disponibles (ADA)")
+    st.caption("Catálogo sin dependencias por institución. Elige **alternativas** si no hay disponibilidad o hay intolerancia.")
+    f_clase = st.multiselect("Filtrar por clase", CLASES, default=CLASES)
+    tabla = pd.DataFrame(
+        [{"clase":c,"fármaco":n,"inicio":i,"máxima":m,"nota":nota} for c,n,i,m,nota in CATALOGO if c in f_clase]
+    )
+    st.dataframe(tabla, use_container_width=True, hide_index=True)
+
+    st.markdown("#### Sugerir alternativa")
+    g1, g2 = st.columns(2)
+    with g1:
+        clase_sel = st.selectbox("Clase objetivo", CLASES, index=0)
+    with g2:
+        farm_sel = st.selectbox("Si no disponible / intolerancia a", [d[1] for d in CATALOGO if d[0]==clase_sel])
+    alts = alternativas_de_clase(clase_sel, excluir=farm_sel)
+    if alts:
+        st.markdown("**Alternativas en la misma clase:**")
+        for c,n,i,m,nota in alts:
+            st.markdown(f"- {n}: inicio **{i}**, máxima **{m}**. {nota}")
+    else:
+        st.info("No hay alternativas para la combinación elegida.")
+
+# --------- EDUCACIÓN / DOCENTE ----------
+with tab_edu:
+    st.markdown("#### Glosario educativo: mitos y realidades")
     st.markdown("""
-**¿Por qué estas recomendaciones?**  
-Se siguen principios del **ADA Standards of Care** (control individualizado, priorización por riesgo CV/renal, seguridad e hipoglucemia).  
-- **CKD-EPI 2021** sin raza para eGFR.  
-- **Metas** típicas: A1c <7% (o <7.5% si mayor fragilidad); preprandial 80–130 mg/dL; posprandial 1–2 h <180 mg/dL.  
-- **SGLT2** con **beneficio renal/IC** y **GLP-1 RA** con **beneficio CV** son preferentes según comorbilidad.  
-- **Insulina basal** cuando A1c ≥10%, glucosa en ayunas ≥300 mg/dL o síntomas catabólicos; o como intensificación.
-
-**Fórmulas y reglas:**
-- **CKD-EPI 2021 (mg/dL)**  
-  \\[
-  eGFR = 142\\cdot \\min(SCr/K,1)^a \\cdot \\max(SCr/K,1)^{-1.200} \\cdot 0.9938^{\\text{edad}} \\cdot (1.012\\,\\text{si mujer})
-  \\]  
-  con \\(K=0.7\\) mujer, \\(K=0.9\\) hombre; \\(a=-0.241\\) mujer, \\(a=-0.302\\) hombre.
-- **Regla 500/1800 (PRO)**  
-  - **ICR** (gramos carbohidrato por 1 U): \\(ICR \\approx 500/TDD\\).  
-  - **CF** (mg/dL por 1 U): \\(CF \\approx 1800/TDD\\).  
-  - **Bolo** = \\(\\frac{\\text{CHO}}{ICR} + \\frac{(G_{act}-G_{obj})}{CF}\\).  
-  Ajustar con SMBG/CGM, actividad física y sensibilidad individual.
-
-**Criterios de ajuste:**
-- **Basal**: +2 U cada 3 días hasta ayuno 80–130 mg/dL; si >0.5 U/kg/d y A1c alta → añadir prandial.  
-- **Prandial**: 4 U en comida principal (o 10% basal), ↑ 1–2 U cada 2–3 días según PP.  
-- **Metformina**: plena si eGFR ≥45; 30–44 máx 1000 mg/d; <30 evitar.  
-- **DPP-4**: linagliptina sin ajuste; sitagliptina 100/50/25 mg/d según eGFR.  
-- **SGLT2**: iniciar si eGFR ≥20 (beneficio renal/CV), potencia glucémica menor si eGFR <45.  
-- **GLP-1 RA**: escalonar lento por tolerancia GI; favorecen pérdida de peso.
-
-**Bibliografía (enlaces):**
-- ADA. *Standards of Care in Diabetes—2025* (profesionales): https://professional.diabetes.org/standards-of-care  
-- ADA en español (diagnóstico y educación): https://diabetes.org/espanol/diagnostico  
-- KDIGO & ADA 2022: manejo de diabetes y CKD: https://kdigo.org/guidelines/diabetes-ckd/  
-- CKD-EPI 2021 creatinina only: https://www.kidney.org/professionals/kdoqi/gfr_calculator  
-- Insulin therapy principles (ADA insulin intensification): busca “ADA insulin intensification basal bolus 2025”.
+- **“Si empiezo insulina, ya no hay regreso.”** → Puede ser temporal o permanente; depende del control y evolución.
+- **“El medicamento daña el riñón.”** → El mal control glucémico/HTA daña el riñón; SGLT2i **protegen**.
+- **“Si me siento bien, puedo dejar el tratamiento.”** → Puede no haber síntomas; la adherencia evita complicaciones.
+- **“Todas las sulfonilureas son iguales.”** → Diferencias de seguridad; en CKD se prefiere **glipizida**.
+- **“La metformina siempre causa daño.”** → Segura en eGFR ≥45; 30–44 con dosis reducida; evitar si <30.
 """)
 
-# ================== EDUCACIÓN (PACIENTE) ==================
-st.divider()
-st.header("📚 Educación para el paciente")
-st.markdown("""
-**Objetivos del tratamiento**  
-- Mantener glucosas dentro de metas para prevenir **complicaciones** (riñón, corazón, ojos, nervios).  
-- Combinar **alimentación saludable**, **actividad física**, **medicación** y **monitoreo**.
-
-**Monitoreo**  
-- Si usa **insulina**: medir antes de las comidas y a veces 2 h después; revisar hipoglucemias (<70 mg/dL).  
-- Usar **CGM** si está disponible (facilita ajustes y seguridad).  
-
-**Alimentación y actividad**  
-- Porciones adecuadas de carbohidratos; preferir fibra, vegetales, granos integrales.  
-- Actividad aeróbica moderada ≥150 min/semana y entrenamiento de fuerza ≥2 días/semana (salvo indicación médica).
-
-**Medicamentos: puntos clave**  
-- **Metformina** puede causar malestar GI; tomar con comida y titular lentamente.  
-- **SGLT2**: hidratación adecuada, avisar si hay infección genital o síntomas de cetosis.  
-- **GLP-1 RA**: náusea al inicio es común; suele mejorar en 1–2 semanas.  
-- **Insulina**: rotar sitios, reconocer hipoglucemia (temblor, sudor, confusión) y tratar de inmediato.
-
-**Enlaces confiables**  
-- ADA para pacientes (español): https://diabetes.org/es  
-- Etiqueta de alimentos y carbohidratos: https://www.cdc.gov/diabetes/managing/healthy-eating.html  
+    st.markdown("#### Glosario de términos (clínico)")
+    st.markdown("""
+- **TDD (Total Daily Dose)**: dosis total diaria de insulina (basal + prandial) expresada en unidades (U/día).
+- **ICR (Insulin-to-Carb Ratio)**: cuántos gramos de carbohidratos cubre 1 unidad de insulina. Estimación inicial: **ICR ≈ 500 / TDD**.
+- **CF (Correction Factor)** o sensibilidad a insulina: cuántos mg/dL baja 1 unidad de insulina. Estimación inicial: **CF ≈ 1800 / TDD**.
+- **Conteo de carbohidratos (CHO)**: método para ajustar bolo prandial según los gramos de CHO que va a ingerir el/la paciente.
 """)
 
-# ================== TABLA DEL CATÁLOGO ==================
-st.divider()
-st.subheader("Catálogo completo (consulta rápida)")
-tabla = CAT[["clase","nombre","forma","inicio","max","regla_renal"]].rename(columns={
-    "clase":"Clase","nombre":"Medicamento","forma":"Forma","inicio":"Inicio sugerido","max":"Dosis máxima","regla_renal":"Notas clave"
-})
-st.dataframe(tabla, use_container_width=True, hide_index=True)
+    st.markdown("#### ¿Cómo calcular carbohidratos para un bolo?")
+    st.markdown("""
+1) **Estimar/medir CHO** del plato (leer etiquetas, equivalentes, apps; 1 ración = 15 g CHO).  
+2) **Cálculo por ICR**: Bolo por comida = **CHO (g) / ICR (g/U)**.  
+3) **Corrección** (si glucosa actual > objetivo): **(Gact − Gobj) / CF**.  
+4) **Bolo total** = bolo CHO + corrección. Ajustar por actividad física, tendencia de CGM y riesgo de hipo.  
+5) Redondear a incrementos prácticos (p. ej., 0.5–1 U) según dispositivo y experiencia clínica.
+""")
 
-# ================== DISCLAIMER ==================
-st.markdown("""
-<br>
-<div class="badge">© 2025 – Herramienta de apoyo clínico.</div>
-Esta app **no sustituye** el juicio profesional ni las guías oficiales. Personalice metas, combinaciones y titulación según el paciente.
-""", unsafe_allow_html=True)
+    st.markdown("#### Advertencias clínicas importantes")
+    st.markdown("""
+- **Betabloqueadores** (p. ej., propranolol, metoprolol): pueden **enmascarar síntomas adrenérgicos** de hipoglucemia (temblor, taquicardia). Educar al/la paciente para medir glucosa ante síntomas atípicos (sudoración, confusión).  
+- **Fluoroquinolonas** (p. ej., levofloxacino): riesgo de **hipo/hiperglucemia** → vigilar y ajustar.  
+- **Corticosteroides sistémicos**: tienden a **elevar** glucosa (hiperglucemia posprandial) → puede requerir correcciones/ajustes temporales.  
+- **SGLT2i**: riesgo de **cetoacidosis euglucémica** (especialmente en ayunos, enfermedad aguda, posquirúrgico); suspender en escenarios de alto riesgo y educar señales de alarma.  
+- **Sulfonilureas**: mayor riesgo de **hipoglucemia** en adultos mayores y **CKD** → preferir **glipizida**, evitar **gliburida**.  
+- **Insulina** + **GLP-1 RA**: combinación útil para bajar A1c y peso; puede requerir **reducir basal** al iniciar GLP-1 RA para evitar hipoglucemia.  
+""")
+
+    st.markdown("#### Modo docente · fórmulas clave")
+    st.markdown("""
+- **eGFR (CKD-EPI 2021)**: 142 × (min(Scr/K,1))^a × (max(Scr/K,1))^−1.2 × (0.9938)^edad × [×1.012 si mujer].  
+- **Reglas empíricas**: ICR≈**500/TDD**; CF≈**1800/TDD**.  
+- **Basal T2D**: 0.1–0.2 U/kg/d (escenarios seleccionados hasta 0.3–0.5). Titulación **+2 U cada 3 días** al objetivo.  
+- **Cuándo añadir bolo**: A1c alta con ayuno controlado o basal >0.5 U/kg/d.
+""")
+
+    st.markdown("#### Bibliografía (enlace)")
+    st.markdown("""
+- ADA **Standards of Care in Diabetes 2025** – https://professional.diabetes.org/standards-of-care  
+- ADA (español – diagnóstico/educación) – https://diabetes.org/espanol/diagnostico  
+- KDIGO/ADA – Diabetes y enfermedad renal crónica – https://kdigo.org/guidelines/diabetes-ckd/  
+- CKD-EPI 2021 calculadora/profesionales – https://www.kidney.org/professionals/kdoqi/gfr_calculator  
+""")
+
+st.caption("© 2025 Herramienta de apoyo clínico. Esta app no sustituye el juicio profesional ni las guías oficiales.")
