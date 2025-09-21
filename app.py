@@ -1,54 +1,66 @@
-# app.py – Diabetes ADA MX (PLUS/PRO + Cuadro Básico Auto)
-# Interfaz profesional + Motor de decisiones ADA-oriented + PDFs + PRO 500/1800
+# app.py – Diabetes ADA MX (Premium, PLUS/PRO + Cuadro Básico Auto)
 
 import streamlit as st
 import numpy as np
 import pandas as pd
 from io import BytesIO
 from datetime import date, datetime
+from pathlib import Path
+
+# PDF
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import inch
 
-# ============ PAGE CONFIG & STYLE ============
+# ================== CONFIGURACIÓN PÁGINA & ESTILO ==================
 st.set_page_config(
-    page_title="Diabetes ADA MX (PLUS/PRO + Cuadro Básico Auto)",
+    page_title="Diabetes ADA MX",
     page_icon="🩺",
     layout="wide"
 )
 
-# CSS simple para look más profesional
+# Encabezado con logo (assets/logo.png)
+logo_path = Path("assets/logo.png")
+if logo_path.exists():
+    col_logo, col_title = st.columns([1, 5])
+    with col_logo:
+        st.image(str(logo_path), use_column_width=True)
+    with col_title:
+        st.title("🩺 Diabetes ADA MX")
+        st.caption("Motor ADA · eGFR CKD-EPI 2021 · PRO 500/1800 · PDFs · Cuadro básico auto-actualizable")
+else:
+    st.title("🩺 Diabetes ADA MX")
+    st.caption("Motor ADA · eGFR CKD-EPI 2021 · PRO 500/1800 · PDFs · Cuadro básico auto-actualizable")
+
+# CSS premium (suave)
 st.markdown("""
 <style>
-/* títulos y espaciados */
-h1, h2, h3 { font-weight: 700; }
-.block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
-div[data-testid="stMetricDelta"] svg { display: none; } /* oculta flechas de métricas */
-/* cards */
-.st-emotion-cache-ue6h4q, .st-emotion-cache-1r6slb0 { border-radius: 12px; }
-/* subtítulos suaves */
-small, .caption { color: #6b7280; }
-/* botones en ancho completo */
-.stButton>button { width: 100%; border-radius: 10px; }
+section.main .block-container { max-width: 1200px; }
+.stButton > button {
+  border-radius: 12px; padding: 0.6rem 1rem; font-weight: 600;
+}
+.stTextInput > div > div > input,
+.stNumberInput > div > div > input,
+.stSelectbox > div > div { border-radius: 10px !important; }
+[data-testid="stMetricValue"] { font-weight: 700; }
 </style>
 """, unsafe_allow_html=True)
 
-# ============ CONSENTIMIENTO ============
+# ================== CONSENTIMIENTO ==================
 if "acepta" not in st.session_state:
     st.session_state["acepta"] = False
 
 if not st.session_state["acepta"]:
-    st.title("🩺 Manejo de Diabetes – Herramienta de Apoyo Clínico")
-    st.caption("Basada en ADA Standards of Care y CKD-EPI 2021. No sustituye el juicio clínico.")
+    st.subheader("Aviso de privacidad y descargo de responsabilidad")
     st.markdown("""
-**Uso clínico responsable:** Esta app resume guías y buenas prácticas; **no** sustituye valoración profesional.  
-**Privacidad:** Evita datos identificables al exportar. Cumple normativa local aplicable.
+**Uso clínico responsable:** Esta app resume guías (ADA, CKD-EPI) y buenas prácticas. **No sustituye** el juicio clínico ni lineamientos oficiales.  
+**Privacidad:** Evita datos identificables en exportables; cumple la normativa local aplicable.
 """)
     acepto = st.checkbox("He leído y acepto el Aviso de Privacidad y el Descargo de Responsabilidad.")
     st.button("Ingresar", disabled=not acepto, on_click=lambda: st.session_state.update({"acepta": True}))
     st.stop()
 
-# ============ MODO PLUS/PRO & BÁSICO ============
+# ================== MODO PLUS/PRO ==================
 if "modo" not in st.session_state:
     st.session_state["modo"] = "PLUS"
 
@@ -57,20 +69,14 @@ def switch_mode():
 
 col_head1, col_head2 = st.columns([5,2])
 with col_head1:
-    st.title("🩺 Diabetes ADA MX")
-    st.caption("eGFR CKD-EPI 2021 · Motor de decisiones ADA · PRO 500/1800 · PDFs · Cuadro básico auto-actualizable")
+    st.caption("Versión premium · interfaz limpia y profesional")
 with col_head2:
     if st.session_state["modo"] == "PLUS":
-        st.button("🔓 Abrir Modo PRO (avanzado)", on_click=switch_mode)
+        st.button("🔓 Abrir Modo PRO", on_click=switch_mode)
     else:
         st.button("⬅️ Volver a Modo PLUS", on_click=switch_mode)
-    modo_basico = st.toggle("🧰 Cuadro farmacológico básico", value=False,
-                            help="Prioriza fármacos de alta disponibilidad/costo bajo y simplifica selectores.")
 
-st.info(f"Modo actual: **{st.session_state['modo']}** · "
-        f"{'🧰 Cuadro básico activo' if modo_basico else 'Catálogo completo'}")
-
-# ============ UTILIDADES CLÍNICAS ============
+# ================== UTILIDADES CLÍNICAS ==================
 def egfr_ckdepi_2021(scr_mgdl: float, age: int, sex: str) -> float:
     is_fem = sex.lower().startswith("f")
     K = 0.7 if is_fem else 0.9
@@ -88,9 +94,9 @@ def metas_glicemicas_default(edad):
 
 def bmi(kg, cm):
     try:
-        m = cm/100.0
+        m = cm / 100.0
         if m <= 0: return None
-        return round(kg/(m*m), 1)
+        return round(kg / (m*m), 1)
     except Exception:
         return None
 
@@ -100,8 +106,8 @@ def uacr_categoria(uacr_mgg):
     except:
         return "ND"
     if v < 30: return "A1 (<30 mg/g)"
-    if v < 300: return "A2 (30-299 mg/g)"
-    return "A3 (>=300 mg/g)"
+    if v < 300: return "A2 (30–299 mg/g)"
+    return "A3 (≥300 mg/g)"
 
 def to_mgdl(value, unidad):
     if value is None: return None
@@ -111,8 +117,8 @@ def to_unit(value_mgdl, unidad):
     if value_mgdl is None: return None
     return round(float(value_mgdl)/18.0, 1) if unidad == "mmol/L" else float(value_mgdl)
 
-# ============ CARGA CUADRO BÁSICO DESDE REPO ============
-@st.cache_data(ttl=86400)  # 24 h
+# ================== CARGA DE CUADRO BÁSICO (DEL REPO) ==================
+@st.cache_data(ttl=86400)
 def cargar_cuadro_local():
     try:
         df = pd.read_csv("data/cuadro.csv")
@@ -145,7 +151,7 @@ def filtros_disponibilidad_costos(farmacos, disp_ok, costos_ok, egfr):
         res.append(f)
     return res
 
-# ============ MOTOR DE DECISIONES ADA ============
+# ================== MOTOR DE DECISIONES ADA ==================
 FARMACOS = {
     "Metformina": {
         "clase": "Biguanida", "inicio": "500 mg c/12 h con comida", "max": "2000 mg/d",
@@ -225,7 +231,7 @@ def sugerencias_iniciales(dm, a1c, fpg, ppg, egfr, ascvd, ic, ckd, sintomas_cata
     banda, predominio = severidad_por_glicemia(a1c, fpg, ppg)
     plan = []; notas = []
     if dm == "DM1":
-        return ["Glargina U100 (basal)", "Aspart/Lispro (prandial)"], ["DM1: basal-bolo; educación/contar carbohidratos."]
+        return ["Glargina U100 (basal)", "Aspart/Lispro (prandial)"], ["DM1: basal-bolo; educación y conteo de carbohidratos."]
     if sintomas_catabolicos or (fpg is not None and fpg >= 300) or a1c >= 10:
         plan = ["Glargina U100 (basal)"]
         if predominio == "posprandial" or a1c >= 10:
@@ -277,9 +283,9 @@ def siguiente_paso(current_meds, a1c_meta, a1c_actual, predominio, egfr, imc):
     if a1c_actual > a1c_meta:
         if "Glargina U100 (basal)" in current:
             if predominio == "posprandial":
-                pasos.append("Añadir insulina prandial (1 comida 4 U) y escalar a 2–3 comidas según PPG/A1c.")
+                pasos.append("Añadir prandial en 1 comida (4 U) y escalar a 2–3 comidas según PPG/A1c.")
             else:
-                pasos.append("Titulación basal: +2 U cada 3 días hasta ayuno 80–130; si >0.5 U/kg y sin control → prandial o GLP-1 RA.")
+                pasos.append("Titulación basal: +2 U cada 3 días; si >0.5 U/kg y sin control → prandial o GLP-1 RA.")
         else:
             if predominio == "ayuno":
                 pasos.append("Considerar iniciar basal (glargina 0.1–0.2 U/kg/d).")
@@ -292,7 +298,7 @@ def siguiente_paso(current_meds, a1c_meta, a1c_actual, predominio, egfr, imc):
         pasos = ["Reforzar adherencia, educación y estilo de vida; reevaluar en 8–12 semanas."]
     return pasos
 
-# ============ PRO – Bolos 500/1800 ============
+# PRO – bolos 500/1800
 def estimar_tdd(dx, peso_kg, tdd_manual):
     if tdd_manual and tdd_manual > 0: return float(tdd_manual)
     return round((0.5 if dx == "DM1" else 0.3) * peso_kg, 1)
@@ -309,11 +315,11 @@ def dosis_bolo(carbs_g, gluc_actual_mgdl, gluc_objetivo_mgdl, icr, cf):
     u = round(u * 2) / 2.0
     return u, "Bolo = carbo/ICR + corrección; ajustar por actividad física y tendencia de CGM."
 
-# ============ SIDEBAR – Datos del paciente ============
+# ================== SIDEBAR – Datos del paciente ==================
 with st.sidebar:
     st.header("Paciente")
     unidad_gluc = st.selectbox("Unidades de glucosa", ["mg/dL","mmol/L"])
-    institucion = st.selectbox("Institución (cuadro básico)", ["GENERAL","IMSS","ISSSTE","IMSS-BIENESTAR"])
+    institucion = st.selectbox("Institución (cuadro básico)", ["GENERAL","IMSS","ISSSTE","IMSS-BIENESTAR","ABC"])
     nombre = st.text_input("Nombre", "")
     edad = st.number_input("Edad (años)", 18, 100, 55)
     sexo = st.selectbox("Sexo biológico", ["Femenino","Masculino"])
@@ -355,17 +361,17 @@ with st.sidebar:
                              16.7 if unidad_gluc=="mmol/L" else 300.0,
                              to_unit(metas["pp_max"], unidad_gluc))
 
-# ============ CALCULOS INICIALES ============
+# ================== CÁLCULOS INICIALES ==================
 egfr = egfr_ckdepi_2021(scr, int(edad), sexo)
 registros, meta_fuente = cargar_cuadro_local()
 registros = filtrar_por_institucion(registros, institucion)
 
-# ============ TABS PRINCIPALES ============
+# ================== TABS PRINCIPALES ==================
 tab_over, tab_plan, tab_cat, tab_exports, tab_edu = st.tabs(
     ["🏥 Resumen", "🧪 Plan terapéutico", "💊 Cuadro básico", "🧾 Exportables", "📚 Educación"]
 )
 
-# ============ TAB RESUMEN ============
+# ================== TAB RESUMEN ==================
 with tab_over:
     colA, colB, colC = st.columns([1,1,1])
     with colA:
@@ -384,20 +390,19 @@ with tab_over:
     st.write("- Ajustar terapia según comorbilidades (ASCVD/IC/CKD), riesgo de hipo, preferencia y disponibilidad.")
     st.write("- Reevaluar control y tolerancia en 8–12 semanas o antes si es necesario.")
 
-# ============ TAB PLAN TERAPÉUTICO ============
+# ================== TAB PLAN TERAPÉUTICO ==================
 with tab_plan:
     col1, col2 = st.columns([1,1])
     with col1:
-        st.subheader("1) Evaluación renal (CKD-EPI 2021)")
+        st.subheader("1) Evaluación renal")
         st.metric("eGFR estimada", f"{egfr} mL/min/1.73 m²")
         if egfr < 30:
             st.error("eGFR <30: evitar metformina; considerar GLP-1 RA; SGLT2i sin beneficio glucémico, sí renal/CV.")
         elif egfr < 45:
             st.warning("eGFR 30–44: metformina solo si ya la usaba (máx 1000 mg/d).")
         st.caption("Considerar ACR y nefroprotección.")
-
     with col2:
-        st.subheader("2) Recomendación (ADA – según A1c/FPG/PPG)")
+        st.subheader("2) Recomendación (ADA – por A1c/FPG/PPG)")
         banda, predominio = severidad_por_glicemia(a1c, gluc_ayunas, gluc_pp)
         plan_inicial, notas_ini = sugerencias_iniciales(dx, a1c, gluc_ayunas, gluc_pp,
                                                         egfr, ascvd, ic, tiene_ckd, sintomas, imc_val or 0)
@@ -409,10 +414,8 @@ with tab_plan:
             st.markdown("**Justificación:**")
             for n in notas_ini: st.markdown(f"• {n}")
 
-    # Sección Insulina – PLUS
+    # Insulina (PLUS/PRO)
     st.subheader("2b) Insulina: dosis de inicio y titulación")
-    if dx == "DM1":
-        st.info("DM1: estimar TDD ≈ 0.5 U/kg/d → 50% basal + 50% prandial dividido en comidas.")
     st.write("- Basal: 0.1–0.2 U/kg/d (o 10 U). Titular +2 U cada 3 días hasta ayuno 80–130 mg/dL.")
     st.write("- Si A1c alta con ayuno controlado o basal >0.5 U/kg/d → añadir prandial.")
     if st.session_state["modo"] == "PRO":
@@ -443,7 +446,7 @@ with tab_plan:
 
     # Asistente de escalamiento
     st.divider()
-    st.subheader("3) Asistente de escalamiento (según tratamiento actual)")
+    st.subheader("3) Escalamiento (según tratamiento actual)")
     opciones_actuales = list(FARMACOS.keys())
     actual_sel = st.multiselect("Medicamentos actuales", opciones_actuales,
                                 help="Selecciona lo que el paciente ya usa")
@@ -452,22 +455,22 @@ with tab_plan:
     st.markdown("**Si no alcanza la meta en 8–12 semanas →**")
     for s in pasos: st.markdown(f"- {s}")
 
-# ============ TAB CUADRO BÁSICO ============
+# ================== TAB CUADRO BÁSICO ==================
 with tab_cat:
     st.caption(f"Fuente: **{meta_fuente['fuente']}** · {meta_fuente.get('ruta','')} · Última lectura: {meta_fuente.get('timestamp','')}")
     st.subheader("Filtrar por disponibilidad y costo")
     disp_sel = st.multiselect("Disponibilidad", ["alta","media","baja"],
-                              default=(["alta","media"] if modo_basico else ["alta","media","baja"]))
+                              default=["alta","media","baja"])
     costo_sel = st.multiselect("Costo", ["$","$$","$$$"],
-                               default=(["$"] if modo_basico else ["$","$$","$$$"]))
+                               default=["$","$$","$$$"])
     catalogo = filtros_disponibilidad_costos(registros, disp_sel, costo_sel, egfr)
     if not catalogo:
         st.warning("No hay fármacos que cumplan los filtros actuales.")
     else:
         df_view = pd.DataFrame(catalogo)[["clase","nombre","costo","disp","notas"]]
-        st.dataframe(df_view, use_container_width=True, hide_index=True)
+        st.dataframe(df_view, use_column_width=True, hide_index=True)
 
-# ============ PDF HELPERS ============
+# ================== PDF HELPERS ==================
 def _wraplines(c, left, y, width, text, bullet="- "):
     for seg in [text[i:i+95] for i in range(0, len(text), 95)]:
         c.drawString(left, y, f"{bullet}{seg}")
@@ -539,7 +542,7 @@ def construir_pdf_hoja_alta(nombre, unidad):
                 if y < 72: c.showPage(); y = letter[1] - 72
     c.save(); buffer.seek(0); return buffer
 
-# ============ TAB EXPORTABLES ============
+# ================== TAB EXPORTABLES ==================
 with tab_exports:
     st.subheader("Exportables en PDF")
     # Construir contenido del plan
@@ -547,7 +550,7 @@ with tab_exports:
     plan_inicial, notas_ini = sugerencias_iniciales(dx, a1c, gluc_ayunas, gluc_pp,
                                                     egfr, ascvd, ic, tiene_ckd, sintomas, imc_val or 0)
     recs_pdf = [f"{p}: {texto_dosis_y_titulacion(p, peso)}" for p in plan_inicial]
-    recs_pdf += [f"Insulina basal: 0.1–0.2 U/kg/d, titular +2 U cada 3 días hasta ayuno objetivo."]
+    recs_pdf += ["Insulina basal: 0.1–0.2 U/kg/d; titular +2 U cada 3 días hasta ayuno objetivo."]
     datos = {
         "Nombre": nombre or "—",
         "Edad": f"{edad} años",
@@ -582,7 +585,7 @@ with tab_exports:
             st.download_button("Descargar hoja de alta", data=pdf_ha,
                                file_name="hoja_alta_diabetes.pdf", mime="application/pdf")
 
-# ============ TAB EDUCACIÓN ============
+# ================== TAB EDUCACIÓN ==================
 with tab_edu:
     with st.expander("📚 Glosario: mitos y realidades"):
         st.markdown("""
@@ -605,4 +608,4 @@ with tab_edu:
 **Realidad:** Segura en eGFR ≥45; 30–44 con dosis reducida; **evitar** si eGFR <30.
 """)
 
-st.caption("© 2025 – Herramienta de apoyo clínico. Esta app no sustituye el juicio profesional ni las guías oficiales.")
+st.caption("© 2025 – Herramienta de apoyo clínico. No sustituye el juicio profesional ni las guías oficiales.")
