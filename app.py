@@ -680,37 +680,56 @@ st.caption("Registra lo que usa el/la paciente para sugerir escalamiento, dosis 
 
 df_cols = ["clase", "fármaco", "dosis actual", "frecuencia"]
 ejemplo = [
-    {"clase":"Metformina", "fármaco":"Metformina", "dosis actual":"850 mg", "frecuencia":"c/12 h"},
-    {"clase":"DPP-4", "fármaco":"Linagliptina", "dosis actual":"5 mg", "frecuencia":"c/24 h"},
+    {"clase": "Metformina", "fármaco": "Metformina",     "dosis actual": "850 mg", "frecuencia": "c/12 h"},
+    {"clase": "DPP-4",      "fármaco": "Linagliptina",   "dosis actual": "5 mg",   "frecuencia": "c/24 h"},
 ]
+
 key_data = "tabla_trat"
 if key_data not in st.session_state:
     st.session_state[key_data] = pd.DataFrame(ejemplo, columns=df_cols)
 
-edit_df = st.data_editor(
-    st.session_state[key_data],
-    num_rows="dynamic",
-    columns={
-        "clase": st.column_config.SelectboxColumn(options=CLASES, required=True),
-        "fármaco": st.column_config.SelectboxColumn(options=[d[1] for d in CATALOGO], required=True),
-        "dosis actual": st.column_config.TextColumn(help="Ej. 850 mg / 10 U"),
-        "frecuencia": st.column_config.TextColumn(help="Ej. c/12 h, c/24 h, desayuno/cena")
-    },
-    use_container_width=True,
-    hide_index=True
-)
+# Asegurar que existan las columnas y sean string
+base_df = st.session_state[key_data].copy()
+for col in df_cols:
+    if col not in base_df.columns:
+        base_df[col] = ""
+base_df = base_df[df_cols].astype(str)
+
+# Configuración de columnas (¡ojo: column_config, NO 'columns'!)
+cfg = {
+    "clase": st.column_config.SelectboxColumn(
+        "Clase", options=CLASES, required=True, help="Clase farmacológica"
+    ),
+    "fármaco": st.column_config.SelectboxColumn(
+        "Fármaco", options=[d[1] for d in CATALOGO], required=True, help="Nombre comercial/genérico del principio activo"
+    ),
+    "dosis actual": st.column_config.TextColumn(
+        "Dosis actual", help="Ej. 850 mg / 10 U"
+    ),
+    "frecuencia": st.column_config.TextColumn(
+        "Frecuencia", help="Ej. c/12 h, c/24 h, desayuno/cena"
+    ),
+}
+
+# Render con fallback si la versión de Streamlit no soporta algún tipo de columna
+try:
+    edit_df = st.data_editor(
+        base_df,
+        num_rows="dynamic",
+        column_config=cfg,          # <- este es el nombre correcto
+        use_container_width=True,
+        hide_index=True,
+    )
+except TypeError:
+    # Fallback sin column_config si la versión del servidor es antigua
+    edit_df = st.data_editor(
+        base_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        hide_index=True,
+    )
+
 st.session_state[key_data] = edit_df
-
-sug_txt = []
-for _, row in edit_df.iterrows():
-    tip = sugerencia_para(row["fármaco"])
-    if tip:
-        sug_txt.append(f"- {row['fármaco']}: {tip}")
-
-if sug_txt:
-    st.markdown("**Sugerencias de titulación:**")
-    for t in sug_txt:
-        st.markdown(t)
 
 # ================== Tabs principales ==================
 tab_res, tab_plan, tab_cat, tab_edu = st.tabs(["📊 Resumen", "🧭 Plan terapéutico", "💊 Catálogo", "📚 Educación"])
