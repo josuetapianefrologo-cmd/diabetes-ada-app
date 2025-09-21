@@ -330,12 +330,28 @@ def ui_perfiles_pacientes():
                 st.info("Elige un perfil en la lista.")
         st.caption("Cargar")
 
-    with bcols[1]:
-        if st.button("➕", use_container_width=True, help="Iniciar un nuevo formulario", key="btn_new_profile"):
-            st.session_state["nombre"] = ""
-            st.session_state["notas_paciente"] = ""
-            st.info("Formulario en blanco.")
-        st.caption("Nuevo")
+with bcols[1]:
+    if st.button("➕", use_container_width=True, help="Iniciar un nuevo formulario", key="btn_new_profile"):
+        # Setea sólo keys que SÍ existen (por si cambiaste nombres)
+        def _set_if_present(k, v):
+            if k in st.session_state:
+                st.session_state[k] = v
+
+        _set_if_present("nombre", "")
+        _set_if_present("edad", 55)
+        _set_if_present("sexo", "Femenino")
+        _set_if_present("dx", "DM2")
+        _set_if_present("peso", 80.0)
+        _set_if_present("talla", 170)
+        # glucosas y lab
+        set_if_present("ay_mg/dL", 150.0)      # si tu input usa key=f"ay{unidad_gluc}", también setea esa
+        _set_if_present("pp_mg/dL", 190.0)
+        _set_if_present("scr", 1.0)
+        _set_if_present("uacr", 20.0)
+
+        st.session_state["notas_paciente"] = ""
+        st.success("Formulario en blanco.")
+        st.rerun()
 
     with bcols[2]:
         if st.button("💾", use_container_width=True, help="Guardar/actualizar perfil", key="btn_save_profile"):
@@ -453,14 +469,14 @@ def sugerencia_para(farmaco):
 with st.sidebar:
     st.header("Paciente")
     unidad_gluc = st.selectbox("Unidades de glucosa", ["mg/dL", "mmol/L"], key="unidad_gluc")
-    nombre = st.text_input("Nombre", "", key="nombre")
-    edad = st.number_input("Edad (años)", 18, 100, 55, key="edad")
+    nombre = st.text_input("Nombre", value=st.session_state.get("nombre",""), key="nombre")
+    edad = st.number_input("Edad (años)", 18, 100, st.session_state.get("edad",55), key="edad")
     sexo = st.selectbox("Sexo biológico", ["Femenino", "Masculino"], key="sexo")
     dx = st.selectbox("Diagnóstico", ["DM2", "DM1"], key="dx")
-    peso = st.number_input("Peso (kg)", 25.0, 300.0, 80.0, step=0.5, key="peso")
-    talla = st.number_input("Talla (cm)", 120, 230, 170, key="talla")
-    imc_val = bmi(peso, talla)
-    st.caption(f"IMC: **{imc_val if imc_val else 'ND'} kg/m²**")
+    peso = st.number_input("Peso (kg)", 25.0, 300.0, st.session_state.get("peso",80.0), step=0.5, key="peso")
+    talla = st.number_input("Talla (cm)", 120, 230, st.session_state.get("talla",170), key="talla")
+    imc_val = bmi(st.session_state.get("peso",peso), st.session_state.get("talla",talla))
+    st.caption(f"IMC: *{imc_val if imc_val else 'ND'} kg/m²*")
 
     st.divider()
     ui_perfiles_pacientes()
