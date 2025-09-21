@@ -313,27 +313,35 @@ def aplicar_a_widgets(p: dict):
     st.session_state["notas_paciente"] = p.get("notas","")
 
 def ui_perfiles_pacientes():
+    """
+    Gestor de perfiles de pacientes guardados en data/pacientes.csv
+    Requiere que existan: cargar_pacientes(), guardar_pacientes(),
+    _nuevo_id(df), recolectar_datos_actuales(), aplicar_a_widgets(p).
+    """
     st.markdown("### 👤 Perfiles de pacientes")
+
+    # Lee/asegura CSV
     df = cargar_pacientes()
 
-# --- Botonera compacta (iconos) ---
-    st.markdown("*Acciones rápidas*")
-    bcols = st.columns([1,1,1,1], gap="small")
+    # ----- Listado selector -----
+    col_top = st.columns([2, 1])
+    with col_top[0]:
+        if df.empty or "id" not in df.columns:
+            listado = []
+        else:
+            listado = (df["id"].astype(str) + " — " + df["nombre"].fillna("")).tolist()
+        elegido = st.selectbox(
+            "Perfiles guardados",
+            listado,
+            index=0 if listado else None,
+            placeholder="—"
+        )
+        id_sel = elegido.split(" — ")[0] if elegido else None
 
-    with bcols[0]:
-        if st.button("📂", use_container_width=True, help="Cargar perfil seleccionado", key="btn_load_profile"):
-            if id_sel:
-                p = df[df["id"]==id_sel].iloc[0].to_dict()
-                aplicar_a_widgets(p)
-                st.success(f"Perfil '{p.get('nombre','')}' cargado.")
-            else:
-                st.info("Elige un perfil en la lista.")
-        st.caption("Cargar")
-
-with bcols[1]:
-    if st.button("➕", use_container_width=True, help="Iniciar un nuevo formulario", key="btn_new_profile"):
-        # Restaura a defaults SOLO keys de widgets conocidas:
-        DEFAULTS = {
+    # Helpers internos para este UI
+    def _defaults_dict():
+        # Ajusta si quieres otros defaults
+        return {
             "unidad_gluc": "mg/dL",
             "nombre": "",
             "edad": 55,
@@ -344,86 +352,138 @@ with bcols[1]:
             "a1c": 8.2,
             "scr": 1.0,
             "uacr": 20.0,
-            # glucosas por unidad:
+            "ascvd": False,
+            "ic": False,
+            "ckd_conocida": False,
+            # glucosas por unidad (sin '/')
             "ay_mgdL": 150.0,
             "pp_mgdL": 190.0,
             "ay_mmolL": 8.3,
             "pp_mmolL": 10.5,
         }
 
-        # Aplica defaults de forma segura
-        for k, v in DEFAULTS.items():
-            st.session_state[k] = v
+    def guardar_perfil_actual():
+        """Toma widgets actuales, guarda (actualiza/crea) y devuelve mensaje."""
+        base = cargar_pacientes()
+        datos = recolectar_datos_actuales()  # <- debe devolver dict con campos esperados
+        ahora = datetime.utcnow().strftime("%Y-%m-%d %H:%MZ")
+        datos["fecha_ultima_actualizacion"] = ahora
 
-        # Limpia notas si la usas
-        st.session_state["notas_paciente"] = ""
+        # si ya hay uno seleccionado, actualiza; si no, crea nuevo
+        if id_sel and (not base.empty) and (base["id"].astype(str) == str(id_sel)).any():
+            idx = base.index[base["id"].astype(str) == str(id_sel)]
+            datos["id"] = str(id_sel)
+            # Asegura columnas
+            for k in PACIENTES_COLUMNS:
+                if k not in base.columns:
+                    base[k] = ""
+            for k, v in datos.items():
+                if k not in base.columns:
+                    base[k] = ""
+                base.loc[idx, k] = str(v)
+            guardar_pacientes(base)
+            return f"Perfil actualizado: {datos.get('nombre','')}"
+        else:
+            nuevo = pd.DataFrame([{**datos, "id": _nuevo_id(base)}])
+            # Asegura columnas y concat
+            for k in PACIENTES_COLUMNS:
+                if k not in nuevo.columns:
+                    nuevo[k] = ""
+            mezcla = pd.concat([base, nuevo], ignore_index=True)
+            guardar_pacientes(mezcla)
+            return f"Perfil creado: {datos.get('nombre','')}"
 
-        st.success("Formulario en blanco.")
-        st.rerun()
+    def eliminar_perfil_actual():
+        """Elimina el perfil seleccionado si existe."""
+        base = cargar_pacientes()
+        if base.empty or not id_sel:
+            return "No hay perfil seleccionado."
+        nuevo_df = base[base["id"].astype(str) != str(id_sel)].copy()
+        guardar_pacientes(nuevo_df)
+        return "Perfil eliminado."
+
+    # ----- Botonera compacta -----
+    st.markdown("*Acciones rápidas*")
+    bcols = st.columns([1, 1, 1, 1], gap="small")
+
+    with bcols[0]:
+        if st.button("📂", use_container_width=True, help="Cargar perfil seleccionado", key="btn_load_profile"):
+            if id_sel and not df.empty and (df["id"].astype(str) == str(id_sel)).any():
+                p = df[df["id"].astype(str) == str(id_sel)].iloc[0].to_dict()
+                aplicar_a_widgets(p)
+                st.success(f"Perfil '{p.get('nombre','')}' cargado.")
+                st.rerun()
+            else:
+                st.info("Elige un perfil en la lista.")
+        st.caption("Cargar")
+
+    with bcols[1]:
+        if st.button("➕", use_container_width=True, help="Nuevo formulario", key="btn_new_profile"):
+            # Restaura defaults de widgets conocidos y limpia notas
+            for k, v in _defaults_dict().items():
+                st.session_state[k] = v
+            st.session_state["notas_paciente"] = ""
+            st.success("Formulario en blanco.")
+            st.rerun()
+        st.caption("Nuevo")
 
     with bcols[2]:
         if st.button("💾", use_container_width=True, help="Guardar/actualizar perfil", key="btn_save_profile"):
-            datos = recolectar_datos_actuales()
-            ahora = datetime.utcnow().strftime("%Y-%m-%d %H:%MZ")
-            datos["fecha_ultima_actualizacion"] = ahora
-            if id_sel and (df["id"]==id_sel).any():
-                idx = df.index[df["id"]==id_sel]
-                datos["id"] = id_sel
-                for k,v in datos.items():
-                    df.loc[idx, k] = str(v)
-                guardar_pacientes(df)
-                st.success(f"Perfil actualizado: {datos['nombre']}")
-            else:
-                nuevo = pd.DataFrame([{**datos, "id": _nuevo_id(df)}])
-                guardar_pacientes(pd.concat([df, nuevo], ignore_index=True))
-                st.success(f"Perfil creado: {datos['nombre']}")
+            msg = guardar_perfil_actual()
+            st.success(msg)
+            st.rerun()
         st.caption("Guardar")
 
     with bcols[3]:
         if st.button("🗑️", use_container_width=True, help="Eliminar perfil seleccionado", type="secondary", key="btn_del_profile"):
             if id_sel:
-                df = df[df["id"]!=id_sel].copy()
-                guardar_pacientes(df)
-                st.warning("Perfil eliminado.")
+                msg = eliminar_perfil_actual()
+                st.warning(msg)
+                st.rerun()
             else:
                 st.info("Elige un perfil para eliminar.")
         st.caption("Eliminar")
 
-    # Exportar / Importar
     st.divider()
-    st.markdown("### 💾 Exportar/Importar (USB)")
-    cexp, cimp = st.columns(2)
-    with cexp:
-        st.markdown("**Exportar a archivo (descarga)**")
-        csv_bytes = cargar_pacientes().to_csv(index=False).encode("utf-8")
+    # ----- Exportar / Importar -----
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("*Descargar CSV de perfiles*")
+        buf = BytesIO()
+        cargar_pacientes().to_csv(buf, index=False)
+        buf.seek(0)
         st.download_button(
-            "⬇️ Descargar `pacientes.csv`",
-            data=csv_bytes,
+            "⬇️ Descargar pacientes.csv",
+            data=buf,
             file_name="pacientes.csv",
             mime="text/csv",
             use_container_width=True
         )
-        st.caption("Guárdalo en tu **USB** o en **Mis documentos**. En otra PC podrás importarlo.")
-    with cimp:
-        st.markdown("**Importar desde archivo**")
-        f = st.file_uploader("Selecciona un `pacientes.csv` desde USB o carpeta", type=["csv"], label_visibility="collapsed")
-        modo_imp = st.radio("Modo de importación", ["Unir (merge)", "Reemplazar"], horizontal=True)
-        if f and st.button("Importar CSV", use_container_width=True):
+
+    with c2:
+        st.markdown("*Subir/Unir CSV*")
+        f = st.file_uploader("Carga un pacientes.csv para unir o reemplazar", type=["csv"], label_visibility="collapsed")
+        modo_up = st.radio("Modo de carga", ["Unir (merge)", "Reemplazar"], horizontal=True)
+        if f and st.button("Procesar CSV", use_container_width=True, key="btn_process_csv"):
             try:
                 up = pd.read_csv(f, dtype=str).fillna("")
-                if "id" not in up.columns:
-                    st.error("El CSV no tiene columna 'id'. No se puede importar.")
+                if modo_up.startswith("Reemplazar"):
+                    guardar_pacientes(up)
+                    st.success("Archivo reemplazado.")
                 else:
                     base = cargar_pacientes()
-                    if modo_imp.startswith("Reemplazar"):
-                        guardar_pacientes(up)
-                        st.success("Archivo **reemplazado** correctamente.")
+                    if "id" not in up.columns:
+                        st.error("El CSV subido no tiene columna 'id'.")
                     else:
-                        mezcla = pd.concat([base[~base["id"].isin(up["id"])], up], ignore_index=True)
+                        mezcla = pd.concat(
+                            [base[~base["id"].astype(str).isin(up["id"].astype(str))], up],
+                            ignore_index=True
+                        )
                         guardar_pacientes(mezcla)
-                        st.success("Datos **unidos** correctamente.")
+                        st.success("Perfiles unidos correctamente.")
+                st.rerun()
             except Exception as e:
-                st.error(f"Error al ar: {e}")
+                st.error(f"Error al procesar CSV: {e}")
 
 def _nuevo_id(df: pd.DataFrame) -> str:
     if df.empty:
