@@ -257,26 +257,26 @@ def guardar_pacientes(df: pd.DataFrame):
 
 def recolectar_datos_actuales() -> dict:
     # Lectura usando keys dinámicas por unidad
-    u = st.session_state.get("unidad_gluc", "mg/dL")
+    u = ss("unidad_gluc", "mg/dL")
     ay_key = f"ay_{u}"
     pp_key = f"pp_{u}"
     return {
-        "nombre": st.session_state.get("nombre", ""),
-        "edad":   st.session_state.get("edad", ""),
-        "sexo":   st.session_state.get("sexo", ""),
-        "dx":     st.session_state.get("dx", ""),
-        "peso_kg": st.session_state.get("peso", ""),
-        "talla_cm": st.session_state.get("talla", ""),
-        "a1c_pct": st.session_state.get("a1c", ""),
+        "nombre": ss("nombre", ""),
+        "edad":   ss("edad", ""),
+        "sexo":   ss("sexo", ""),
+        "dx":     ss("dx", ""),
+        "peso_kg": ss("peso", ""),
+        "talla_cm": ss("talla", ""),
+        "a1c_pct": ss("a1c", ""),
         "unidad_gluc": u,
-        "gluc_ayunas": st.session_state.get(ay_key, ""),
-        "gluc_pp":     st.session_state.get(pp_key, ""),
-        "creatinina_mgdl": st.session_state.get("scr", ""),
-        "uacr_mgg": st.session_state.get("uacr", ""),
-        "ascvd": "Sí" if st.session_state.get("ascvd", False) else "No",
-        "ic":    "Sí" if st.session_state.get("ic", False) else "No",
-        "meds_json": json.dumps(st.session_state.get("plan_meds", {}), ensure_ascii=False),
-        "notas": st.session_state.get("notas_paciente", "")
+        "gluc_ayunas": ss(ay_key, ""),
+        "gluc_pp":     ss(pp_key, ""),
+        "creatinina_mgdl": ss("scr", ""),
+        "uacr_mgg": ss("uacr", ""),
+        "ascvd": "Sí" if ss("ascvd", False) else "No",
+        "ic":    "Sí" if ss("ic", False) else "No",
+        "meds_json": json.dumps(ss("plan_meds", {}), ensure_ascii=False),
+        "notas": ss("notas_paciente", "")
     }
 
 def aplicar_a_widgets(p: dict):
@@ -336,7 +336,7 @@ def ui_perfiles_pacientes():
 
     with cols[3]:
         if st.button("💾 Guardar/Actualizar", use_container_width=True):
-            if not st.session_state.get("local_guardado_aceptado"):
+            if not ss("local_guardado_aceptado", False):
                 st.error("Debes aceptar el aviso y firmar para habilitar guardado local.")
             else:
                 datos = recolectar_datos_actuales()
@@ -398,7 +398,7 @@ def ui_perfiles_pacientes():
                         guardar_pacientes(mezcla)
                         st.success("Datos **unidos** correctamente.")
             except Exception as e:
-                st.error(f"Error al importar: {e}")
+                st.error(f"Error al ar: {e}")
 
 def _nuevo_id(df: pd.DataFrame) -> str:
     if df.empty:
@@ -408,6 +408,10 @@ def _nuevo_id(df: pd.DataFrame) -> str:
     except ValueError:
         mx = 0
     return str(mx + 1)
+
+# --- helper para leer del session_state sin .get() ---
+def ss(key, default=None):
+    return st.session_state[key] if key in st.session_state else default
 
 # ================== Catálogo de fármacos (sin instituciones) ==================
 CATALOGO = [
