@@ -537,7 +537,7 @@ def _clamp(v: float, lo: float, hi: float, ndigits: int = 1) -> float:
     return round(v, ndigits)
 
 st.subheader("Metas activas")
-alc_meta = st.number_input(
+a1c_meta = st.number_input(
     "A1c meta (%)",
     min_value=5.5, max_value=9.0,
     value=float(metas.get("A1c_max", 7.0)),
