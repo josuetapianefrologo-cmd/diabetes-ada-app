@@ -1,0 +1,14 @@
+# .streamlit/config.toml  ← ÚNICO TEMA GLOBAL
+[theme]
+base = "light"
+primaryColor = "#0072CE"             # Azul premium
+backgroundColor = "#FFFFFF"          # Fondo
+secondaryBackgroundColor = "#EEF2F6" # Tarjetas
+textColor = "#0B1220"                # Texto con alto contraste
+font = "sans serif"
+
+[client]
+showErrorDetails = true
+
+[server]
+headless = true
