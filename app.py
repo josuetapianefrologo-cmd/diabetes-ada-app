@@ -559,7 +559,7 @@ else:
     pre_max_lo, pre_max_hi = 70.0, 400.0
     pp_max_lo,  pp_max_hi  = 100.0, 400.0
 
-    pre_min_def = float(metasget("pre_min", 80.0))
+    pre_min_def = float(metas.get("pre_min", 80.0))
     pre_max_def = float(metas.get("pre_max", 130.0))
     pp_max_def  = float(metas.get("pp_max", 180.0))
 
